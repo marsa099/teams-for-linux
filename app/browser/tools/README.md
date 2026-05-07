@@ -143,6 +143,11 @@ Implements custom keyboard shortcuts for in-app actions like zoom control and na
 #### [frameless.js](frameless.js)
 Ensures proper functionality of the top bar in frameless mode (i.e. without native window title bar).
 
+#### [vimNav.js](vimNav.js)
+Vimium-style keyboard navigation. Lets you drive Teams without a mouse: `f` opens hint-mode (overlay labels on every clickable element — type the label to click), `j`/`k`/`h`/`l` scroll, `d`/`u` half-page, `gg`/`G` top/bottom, `i` focuses the message composer, `Esc` blurs the active input. Vim keys are passed through to the page when an input or contenteditable has focus, so typing messages still works.
+
+**Configuration**: `vimNavEnabled: true` (default — set to `false` to disable).
+
 #### Global Shortcuts System (Main Process)
 System-wide keyboard shortcuts that work even when Teams is not focused. When triggered, the keyboard event is forwarded to Teams, which handles it with its built-in shortcuts. Configured via the `globalShortcuts` array in `config.json`.
 

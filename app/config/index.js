@@ -489,6 +489,11 @@ function extractYargConfig(configObject, appVersion) {
         describe: "Use MutationObserver to update counter from title",
         type: "boolean",
       },
+      vimNavEnabled: {
+        default: true,
+        describe: "Enable Vimium-style keyboard navigation (f hint mode, j/k scroll, i focus composer, Esc blur)",
+        type: "boolean",
+      },
       watchConfigFile: {
         default: false,
         describe: "Watch for changes in the config file and reload the app",

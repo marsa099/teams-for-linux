@@ -1,3 +1,113 @@
+# marsa099 fork — vimNav & NixOS workflow
+
+This fork adds **Vimium-style keyboard navigation** to teams-for-linux and is wired into a NixOS-based workflow on this machine. The original upstream README is preserved unchanged below.
+
+## What's new
+
+`app/browser/tools/vimNav.js` — a renderer-side keyboard layer:
+
+| Key | Action |
+|---|---|
+| `f` | Hint mode — overlay labels appear on every clickable element. Type the label to click. |
+| `j` `k` `h` `l` | Scroll within the focused container. |
+| `d` `u` | Half-page down/up. |
+| `gg` `G` | Top / bottom. |
+| `i` | Focus the message composer. |
+| `Esc` | Blur the active input (exit composer) or cancel hint mode. |
+
+Vim keys pass through transparently when an input or contenteditable is focused, so typing messages is unaffected. Toggle with `vimNavEnabled: true` in `~/.config/teams-for-linux/config.json`.
+
+## NixOS integration on this machine
+
+The fork is packaged as a real Nix derivation via overlay — same shape as the nixpkgs `teams-for-linux` package, just rebuilt from this repo's `main` branch. Both versions are installed side by side:
+
+| Binary | What it is |
+|---|---|
+| `teams-for-linux` | This fork (default for Super+T) |
+| `teams-for-linux-stock` | Upstream nixpkgs build, untouched |
+
+**Files involved:**
+
+- `~/.config/nixos/flake.nix` — `teams-for-linux-fork` flake input pointing at `github:marsa099/teams-for-linux/main`
+- `~/.config/nixos/modules/teams-fork.nix` — overlay that builds the fork via `buildNpmPackage` and exposes both binaries
+- `~/.scripts/teams-launcher` — two-line launcher that picks fork or stock based on a flag file
+- `~/.scripts/teams-fork` — toggle + deploy helper
+- `~/.config/niri/config.kdl` — Mod+T routes through `teams-launcher`
+
+## Daily workflow — pushing changes to the running app
+
+```bash
+# 1. Edit code in this repo
+cd ~/repos/teams-for-linux
+# ...edit files in app/...
+
+# 2. Iterate locally without rebuilding NixOS (optional)
+#    Builds and runs from app.asar with the cached Electron:
+npm run pack
+nix shell nixpkgs#electron_41 -c bash -c \
+  'exec -a teams-for-linux electron dist/linux-unpacked/resources/app.asar'
+
+# 3. Commit & deploy to the system
+git add app/...
+git commit -m "Adds <thing>"
+teams-fork deploy
+```
+
+`teams-fork deploy` does in order:
+1. Pushes `main` to `origin` (your fork repo on GitHub).
+2. `nix flake lock --update-input teams-for-linux-fork` — bumps the lock file to your new commit.
+3. `sudo nixos-rebuild switch --flake ~/.config/nixos#nixos` — rebuilds and activates.
+
+The first time you run a NixOS rebuild after a `package-lock.json` change, the build will fail with a hash mismatch. Recompute it with:
+
+```bash
+nix-shell -p prefetch-npm-deps --run \
+  "prefetch-npm-deps ~/repos/teams-for-linux/package-lock.json"
+```
+
+Paste the new hash into `npmDepsHash` in `~/.config/nixos/modules/teams-fork.nix`, commit, and re-run `teams-fork deploy`. Most commits don't change `package-lock.json`, so this is rare.
+
+## Switching between fork and stock
+
+```bash
+teams-fork           # status: which is active + pinned commit + drift warning
+teams-fork off       # next Super+T launches stock teams-for-linux-stock
+teams-fork on        # back to fork
+```
+
+The toggle is a flag file (`~/.config/teams-launcher/use-stock`) read by the launcher. No rebuild needed — both binaries are already on PATH after `nixos-rebuild switch`. If the fork ever breaks, `teams-fork off` is your immediate escape hatch.
+
+## Setting this up on a fresh NixOS machine
+
+1. Clone this repo somewhere (`~/repos/teams-for-linux` matches the helper scripts).
+2. Make sure your flake has the `teams-for-linux-fork` input and `modules/teams-fork.nix` is imported.
+3. Copy `~/.scripts/teams-launcher` and `~/.scripts/teams-fork` (they're under the dotfiles repo).
+4. `sudo nixos-rebuild switch --flake ~/.config/nixos#nixos`.
+5. Bind your launcher key to `~/.scripts/teams-launcher`.
+
+## Rebasing on upstream
+
+```bash
+git fetch upstream
+git rebase upstream/main
+git push --force-with-lease origin main   # only the fork remote
+teams-fork deploy
+```
+
+Conflicts are only expected in this README's top section. The actual code change is one self-contained file (`app/browser/tools/vimNav.js`) plus three small wires (`preload.js` modules array, `config/index.js` default flag, `tools/README.md` doc entry).
+
+## Troubleshooting
+
+**Fork didn't end up on PATH after rebuild.** Most likely a `bin/teams-for-linux` collision in `buildEnv` between fork and stock. The overlay renames the stock binary to `teams-for-linux-stock` to avoid this — confirm `which teams-for-linux teams-for-linux-stock` returns both.
+
+**Slow startup vs nixpkgs version.** The Nix-built fork uses an `app.asar` archive (same as upstream package), so startup parity should be near-identical. If it feels slower, you may have stale state — `teams-fork deploy` will rebuild.
+
+**`npm run pack` for local iteration.** This is for the dev loop only. The system's `teams-for-linux` always comes from the Nix derivation, not from `dist/linux-unpacked/`.
+
+---
+
+_Below is the upstream README, unchanged from `IsmaelMartinez/teams-for-linux`._
+
 # Teams for Linux
 
 [![Matrix Space](https://img.shields.io/matrix/teams-for-linux-space%3Amatrix.org?server_fqdn=matrix.org&label=Matrix%20Space)](https://matrix.to/#/#teams-for-linux-space:matrix.org "Matrix Space")

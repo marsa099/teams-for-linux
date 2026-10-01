@@ -5,15 +5,17 @@
  * creating entities for Teams status, media states, and controls.
  *
  * Entities created:
- * - sensor:        Teams presence status (plain text)
- * - binary_sensor: In-Call
- * - button:        Toggle Mute, Toggle Video, Toggle Hand Raise (requires commandTopic)
+ * - sensor:        Teams presence status (plain text), Microphone state
+ * - binary_sensor: In-Call, Incoming Call, Meeting Started, Screen Sharing, Camera
+ * - button:        Leave, Toggle Mute, Toggle Video, Toggle Hand Raise (requires commandTopic)
  *
  * Buttons use payload_press with the pre-built JSON command.
  *
  * Discovery is published on every broker connect/reconnect so entities survive
  * broker restarts. Availability is controlled via {topicPrefix}/connected topic.
  */
+const { getMediaTopics } = require('./mediaTopics');
+
 class HomeAssistantDiscovery {
 	#mqttClient;
 	#mqttConfig;
@@ -22,6 +24,7 @@ class HomeAssistantDiscovery {
 	#deviceId;
 	#deviceName;
 	#commandTopic;
+	#mediaTopics;
 
 	constructor(mqttClient, config) {
 		this.#mqttClient = mqttClient;
@@ -30,6 +33,7 @@ class HomeAssistantDiscovery {
 		this.#discoveryPrefix = config.mqtt.homeAssistant?.discoveryPrefix || 'homeassistant';
 		this.#deviceId = config.mqtt.clientId;
 		this.#deviceName = config.mqtt.homeAssistant?.deviceName || 'Teams for Linux';
+		this.#mediaTopics = getMediaTopics(config.mqtt);
 		this.#commandTopic = config.mqtt.commandTopic
 			? `${config.mqtt.topicPrefix}/${config.mqtt.commandTopic}`
 			: null;
@@ -88,6 +92,17 @@ class HomeAssistantDiscovery {
 		};
 	}
 
+	#buildMicrophoneSensorConfig() {
+		return {
+			name: 'Teams Microphone',
+			unique_id: `${this.#deviceId}_microphone`,
+			state_topic: `${this.#topicPrefix}/${this.#mediaTopics.microphone}`,
+			icon: 'mdi:microphone',
+			availability: this.#getAvailability(),
+			device: this.#getDevice(),
+		};
+	}
+
 	#buildButtonConfig(name, objectId, action, icon) {
 		if (!this.#commandTopic) return null;
 		return {
@@ -104,15 +119,31 @@ class HomeAssistantDiscovery {
 	async publishDiscovery() {
 		const entities = [
 			{component: 'sensor', objectId: 'status', config: this.#buildSensorConfig()},
+			{component: 'sensor', objectId: 'microphone', config: this.#buildMicrophoneSensorConfig()},
 			{
 				component: 'binary_sensor',
 				objectId: 'in_call',
-				config: this.#buildBinarySensorConfig('Teams In Call', 'in_call', 'in-call', 'mdi:phone-in-talk')
+				config: this.#buildBinarySensorConfig('Teams In Call', 'in_call', this.#mediaTopics.inCall, 'mdi:phone-in-talk')
 			},
 			{
 				component: 'binary_sensor',
 				objectId: 'screen_sharing',
-				config: this.#buildBinarySensorConfig('Teams Screen Sharing', 'screen_sharing', 'screen-sharing', 'mdi:monitor-share')
+				config: this.#buildBinarySensorConfig('Teams Screen Sharing', 'screen_sharing', this.#mediaTopics.screenSharing, 'mdi:monitor-share')
+			},
+			{
+				component: 'binary_sensor',
+				objectId: 'camera',
+				config: this.#buildBinarySensorConfig('Teams Camera', 'camera', this.#mediaTopics.camera, 'mdi:camera')
+			},
+			{
+				component: 'binary_sensor',
+				objectId: 'incoming_call',
+				config: this.#buildBinarySensorConfig('Teams Incoming Call', 'incoming_call', this.#mediaTopics.incomingCall, 'mdi:phone-ring')
+			},
+			{
+				component: 'binary_sensor',
+				objectId: 'meeting_started',
+				config: this.#buildBinarySensorConfig('Teams Meeting Started', 'meeting_started', this.#mediaTopics.meetingStarted, 'mdi:calendar-clock')
 			},
 			{
 				component: 'button',
@@ -128,6 +159,11 @@ class HomeAssistantDiscovery {
 				component: 'button',
 				objectId: 'toggle_hand_raise',
 				config: this.#buildButtonConfig('Teams Toggle Hand Raise', 'toggle_hand_raise', 'toggle-hand-raise', 'mdi:hand-back-left')
+			},
+			{
+				component: 'button',
+				objectId: 'leave',
+				config: this.#buildButtonConfig('Teams Leave Call', 'leave', 'leave', 'mdi:phone-hangup')
 			},
 		];
 

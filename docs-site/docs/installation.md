@@ -35,6 +35,35 @@ sudo curl -1sLf -o /etc/yum.repos.d/teams-for-linux.repo https://repo.teamsforli
 sudo dnf install teams-for-linux
 ```
 
+#### Beta Channel (Pre-releases)
+
+New versions are published to a `beta` channel first and promoted to `stable` after a few days of testing. Follow the beta channel if you want pre-releases and want to help test them before promotion.
+
+**Debian/Ubuntu** — same source as stable, with `Suites: beta`:
+
+```bash
+sudo mkdir -p /etc/apt/keyrings
+sudo wget -qO /etc/apt/keyrings/teams-for-linux.asc https://repo.teamsforlinux.de/teams-for-linux.asc
+sh -c 'echo "Types: deb
+URIs: https://repo.teamsforlinux.de/debian/
+Suites: beta
+Components: main
+Signed-By: /etc/apt/keyrings/teams-for-linux.asc
+Architectures: amd64" | sudo tee /etc/apt/sources.list.d/teams-for-linux-packages.sources'
+sudo apt update && sudo apt install teams-for-linux
+```
+
+**RHEL/Fedora/CentOS** — use the beta repository:
+
+```bash
+curl -1sLf -o /tmp/teams-for-linux.asc https://repo.teamsforlinux.de/teams-for-linux.asc
+sudo rpm --import /tmp/teams-for-linux.asc
+sudo curl -1sLf -o /etc/yum.repos.d/teams-for-linux-beta.repo https://repo.teamsforlinux.de/rpm-beta/teams-for-linux-beta.repo
+sudo dnf install teams-for-linux
+```
+
+To return to stable releases, change `Suites: beta` back to `Suites: stable` (Debian/Ubuntu), or remove `/etc/yum.repos.d/teams-for-linux-beta.repo` and reinstall from the stable repository (RHEL/Fedora/CentOS).
+
 ## Distribution-Specific Packages
 
 ### Arch Linux (AUR)
@@ -66,6 +95,14 @@ pacstall -I teams-for-linux-deb
 
 [![Pacstall: teams-for-linux-deb](https://img.shields.io/badge/Pacstall-teams--for--linux--deb-00958C)](https://github.com/pacstall/pacstall-programs/tree/master/packages/teams-for-linux-deb)
 
+### Vylen Linux
+
+```bash
+sudo emerald install teams-for-linux
+```
+
+[![Vylen Linux: teams-for-linux](https://img.shields.io/badge/Vylen_Linux-teams--for--linux-green)](https://vylen.gitlab.io/packages/#teams-for-linux)
+
 ### Snap Store
 
 ```bash
@@ -85,6 +122,33 @@ flatpak install flathub com.github.IsmaelMartinez.teams_for_linux
 ```
 
 <a href='https://flathub.org/apps/details/com.github.IsmaelMartinez.teams_for_linux'><img width='170' alt='Download on Flathub' src='https://flathub.org/assets/badges/flathub-badge-en.png'/></a>
+
+#### Flathub Beta Channel (Pre-releases)
+
+Pre-releases are published to the Flathub beta remote before they reach the stable Flathub build. Following the beta remote is the most useful thing a Flatpak user can do for this project, because sandbox and permission changes can be built by the Flathub buildbot but cannot be tested by the maintainer, who has no Linux desktop available.
+
+```bash
+flatpak remote-add --if-not-exists flathub-beta https://flathub.org/beta-repo/flathub-beta.flatpakrepo
+flatpak install flathub-beta com.github.IsmaelMartinez.teams_for_linux//beta
+```
+
+The beta build is a separate branch of the same application ID, so it installs alongside the stable one rather than replacing it. That matters when you launch it: the desktop launcher and a bare `flatpak run com.github.IsmaelMartinez.teams_for_linux` both keep starting the stable build, so run the beta explicitly, otherwise you will think you are testing the pre-release when you are not.
+
+```bash
+flatpak run com.github.IsmaelMartinez.teams_for_linux//beta
+```
+
+To go back to stable, remove the beta branch:
+
+```bash
+flatpak uninstall com.github.IsmaelMartinez.teams_for_linux//beta
+```
+
+If the install fails with the app not being found on `flathub-beta`, there is no beta build published at the moment. The beta remote only carries a build while a pre-release is being tested, so use the stable Flathub install above and try again after the next release.
+
+:::note
+The beta remote carries pre-release builds and packaging changes that are still being validated, so expect the occasional rough edge. If you hit one, please [open an issue](https://github.com/IsmaelMartinez/teams-for-linux/issues) and mention that you are on the beta remote.
+:::
 
 ## Manual Installation
 

@@ -4,24 +4,46 @@ const {
   MenuItem,
   clipboard,
   dialog,
-  session,
+  nativeImage,
   ipcMain,
+  shell,
 } = require("electron");
 const fs = require("node:fs"),
   path = require("node:path");
+const { fileURLToPath } = require("node:url");
 const appMenu = require("./appMenu");
+const buildProfilesMenu = require("./profilesMenu");
+const {
+  collectPartitionsToClear,
+  clearStorageForPartitions,
+} = require("../utils/storagePartitions");
 const Tray = require("./tray");
+const TrayIconChooser = require("../browser/tools/trayIconChooser");
 const { SpellCheckProvider } = require("../spellCheckProvider");
 const DocumentationWindow = require("../documentationWindow");
 const GpuInfoWindow = require("../gpuInfoWindow");
 const JoinMeetingDialog = require("../joinMeetingDialog");
 const AddProfileDialog = require("../profileDialogs/addProfile");
+const ManageProfileDialog = require("../profileDialogs/manageProfile");
 const autoUpdaterModule = require("../autoUpdater");
+const {
+  writeMigratedConfig,
+  MIGRATED_FILE,
+} = require("../config/migrateFile");
 
 let _Menus_onSpellCheckerLanguageChanged = new WeakMap();
 class Menus {
   #preJoinUrl = null;
   #profileChangeHandler = null;
+  #switcherOpenAddHandler = null;
+  #switcherOpenManageHandler = null;
+
+  #multiAccountOn() {
+    return Boolean(
+      this.profilesManager &&
+        this.configGroup.startupConfig.multiAccount?.enabled
+    );
+  }
 
   constructor(window, configGroup, iconPath, connectionManager, profilesManager = null) {
     this.window = window;
@@ -36,14 +58,19 @@ class Menus {
       this.window,
       this.configGroup.startupConfig.meetupJoinRegEx
     );
-    // Only allocate the Add-profile dialog when multi-account is enabled.
-    // The Profiles menu entry that triggers it is itself gated on the same
-    // flag, so with the flag off this object is never reachable from the UI.
-    this.addProfileDialog =
+    // Only allocate the Add-profile / Manage-profiles dialogs when multi-
+    // account is enabled. The Profiles menu entries that trigger them are
+    // themselves gated on the same flag, so with the flag off these objects
+    // are never reachable from the UI.
+    const multiAccountReady =
       this.profilesManager &&
-      this.configGroup.startupConfig.multiAccount?.enabled
-        ? new AddProfileDialog(this.window, this.profilesManager)
-        : null;
+      this.configGroup.startupConfig.multiAccount?.enabled;
+    this.addProfileDialog = multiAccountReady
+      ? new AddProfileDialog(this.window, this.profilesManager)
+      : null;
+    this.manageProfileDialog = multiAccountReady
+      ? new ManageProfileDialog(this.window, this.profilesManager)
+      : null;
     this.initialize();
   }
 
@@ -74,22 +101,20 @@ class Menus {
       }) === 0;
 
     if (clearStorage) {
-      const defSession = session.fromPartition(
-        this.configGroup.startupConfig.partition
+      // startupConfig, not configGroup: AppConfiguration keeps the parsed
+      // config behind a getter, so reading an option straight off the instance
+      // is always undefined and silently clears everything (#2860).
+      const clearOptions = this.configGroup.startupConfig.clearStorageData;
+      // Every profile owns its own partition, so clearing only the startup one
+      // left each profile's cookies and tokens on disk (#2862).
+      await clearStorageForPartitions(
+        collectPartitionsToClear(
+          this.configGroup.startupConfig.partition,
+          this.profilesManager
+        ),
+        clearOptions,
+        "on quit"
       );
-      if (this.configGroup.clearStorageData) {
-        console.debug(
-          "Clearing storage data on quit",
-          this.config.clearStorageData
-        );
-        await defSession.clearStorageData(this.configGroup.clearStorageData);
-      } else {
-        console.debug(
-          "Clearing storage on quit",
-          this.configGroup.clearStorageData
-        );
-        await defSession.clearStorageData();
-      }
     }
 
     this.window.close();
@@ -132,7 +157,7 @@ class Menus {
       this.window.show();
     }
 
-    this.connectionManager.refresh();
+    this.connectionManager.refresh(true);
   }
 
   debug() {
@@ -143,13 +168,46 @@ class Menus {
     this.window.hide();
   }
 
+  // Attach the menu appropriate for the menubar/multi-account configuration.
+  // With `menubar: "hidden"` AND multi-account on, a menu stays ATTACHED with
+  // only the bar hidden — the menu is the registration site for the pinned-
+  // profile switch accelerators (Ctrl+Alt+1…5, see profilesMenu.js), and
+  // `removeMenu()` would kill them along with the bar. It holds ONLY the
+  // Profiles submenu though: attaching the full menu would also arm the rest
+  // of its accelerators (Ctrl+Q, Ctrl+R, …) where a hidden menubar previously
+  // had none (#2821). Falls back to `removeMenu()` if the Profiles menu
+  // cannot be built (no profilesManager).
+  #attachMenu(menu) {
+    if (
+      this.configGroup.startupConfig.menubar === "hidden" &&
+      this.#multiAccountOn()
+    ) {
+      const template = [buildProfilesMenu(this)].filter(Boolean);
+      if (template.length === 0) {
+        this.window.removeMenu();
+        return;
+      }
+      this.window.setMenu(Menu.buildFromTemplate(template));
+      return;
+    }
+    this.window.setMenu(Menu.buildFromTemplate([menu]));
+  }
+
   initialize() {
     const menu = appMenu(this);
 
-    if (this.configGroup.startupConfig.menubar == "hidden") {
+    // With multi-account OFF the pre-feature `removeMenu()` behaviour is
+    // untouched; otherwise #attachMenu picks the full or profiles-only menu.
+    if (
+      this.configGroup.startupConfig.menubar === "hidden" &&
+      !this.#multiAccountOn()
+    ) {
       this.window.removeMenu();
     } else {
-      this.window.setMenu(Menu.buildFromTemplate([menu]));
+      this.#attachMenu(menu);
+      if (this.configGroup.startupConfig.menubar === "hidden") {
+        this.window.setMenuBarVisibility(false);
+      }
     }
 
     this.initializeEventHandlers();
@@ -169,6 +227,22 @@ class Menus {
       this.profilesManager.on("switch", this.#profileChangeHandler);
       this.profilesManager.on("update", this.#profileChangeHandler);
 
+      // The switcher pill (owned by ProfileViewManager) opens the Add / Manage
+      // dialogs via IPC rather than holding its own dialog instances — these
+      // reuse the exact same dialogs the Profiles menu uses. Both handlers
+      // verify the sender is the switcher pill itself (the only legitimate
+      // caller) so the untrusted Teams renderer can't pop these dialogs.
+      this.#switcherOpenAddHandler = (event) => {
+        if (isSwitcherPillSender(event)) this.addProfile();
+      };
+      this.#switcherOpenManageHandler = (event) => {
+        if (isSwitcherPillSender(event)) this.manageProfiles();
+      };
+      // Switcher pill "Add profile…" link opens the existing Add-profile dialog.
+      ipcMain.on("profile-switcher-open-add", this.#switcherOpenAddHandler);
+      // Switcher pill "Manage profiles…" link opens the existing Manage dialog.
+      ipcMain.on("profile-switcher-open-manage", this.#switcherOpenManageHandler);
+
       // Detach the listeners when the window is destroyed so the
       // long-lived ProfilesManager (a process-wide singleton) does not
       // hold references into a stale Menus instance if the window is
@@ -182,6 +256,18 @@ class Menus {
           this.profilesManager.off("switch", this.#profileChangeHandler);
           this.profilesManager.off("update", this.#profileChangeHandler);
           this.#profileChangeHandler = null;
+        }
+        if (this.#switcherOpenAddHandler) {
+          ipcMain.removeListener(
+            "profile-switcher-open-add",
+            this.#switcherOpenAddHandler
+          );
+          ipcMain.removeListener(
+            "profile-switcher-open-manage",
+            this.#switcherOpenManageHandler
+          );
+          this.#switcherOpenAddHandler = null;
+          this.#switcherOpenManageHandler = null;
         }
       });
     }
@@ -213,17 +299,157 @@ class Menus {
     console.debug("window close");
     if (!this.allowQuit && !this.configGroup.startupConfig.closeAppOnCross) {
       event.preventDefault();
-      this.hide();
+      if (this.configGroup.startupConfig.minimizeOnClose) {
+        this.window.minimize();
+      } else {
+        this.hide();
+      }
     } else {
       this.tray?.close();
       this.window.webContents.session.flushStorageData();
     }
   }
 
+  chooseAppIcon() {
+    const result = dialog.showOpenDialogSync(this.window, {
+      title: "Choose App Icon",
+      filters: [{ name: "Images", extensions: ["png"] }],
+      properties: ["openFile"],
+    });
+    if (result && result.length > 0) {
+      const selectedPath = result[0];
+      if (nativeImage.createFromPath(selectedPath).isEmpty()) {
+        dialog.showMessageBoxSync(this.window, {
+          type: "error",
+          title: "Choose App Icon",
+          message: "That file could not be read as an image.",
+          detail: selectedPath,
+        });
+        return;
+      }
+      this.configGroup.startupConfig.appIcon = selectedPath;
+      this.configGroup.legacyConfigStore.set("appIcon", selectedPath);
+      this.tray?.setBaseIconPath(selectedPath);
+      this.#updateWindowIcon(selectedPath);
+      this.updateMenu();
+    }
+  }
+
+  resetAppIcon() {
+    this.configGroup.startupConfig.appIcon = "";
+    this.configGroup.legacyConfigStore.set("appIcon", "");
+    const iconChooser = new TrayIconChooser(this.configGroup.startupConfig);
+    const iconPath = iconChooser.getFile();
+    this.tray?.setBaseIconPath(iconPath);
+    this.#updateWindowIcon(iconPath);
+    this.updateMenu();
+  }
+
+  #updateWindowIcon(iconPath) {
+    this.window.setIcon(TrayIconChooser.windowImage(iconPath));
+    if (!app.dock) return;
+    // The tray asset is 16px on macOS but the dock needs >=128px, so the
+    // default is resolved separately here, exactly as startup does it.
+    const custom = this.configGroup.startupConfig.appIcon?.trim();
+    const dockIconPath = custom
+      ? custom
+      : path.join(this.configGroup.startupConfig.appPath, "assets/icons/icon-256x256.png");
+    const dockIcon = nativeImage.createFromPath(dockIconPath);
+    app.dock.setIcon(
+      dockIcon.getSize().width < 128
+        ? dockIcon.resize({ width: 128, height: 128 })
+        : dockIcon,
+    );
+  }
+
   saveSettings() {
     // Receive Teams settings from renderer to save to file
     ipcMain.once("get-teams-settings", saveSettingsInternal);
     this.window.webContents.send("get-teams-settings");
+  }
+
+  async showMigratedConfig() {
+    const result = writeMigratedConfig(this.configGroup.configPath);
+    const TITLE = "Updated Config";
+
+    // Everything below prints option NAMES only. A config file carries broker
+    // URLs, certificate paths and service URLs, and this text goes on screen
+    // and into the log.
+    const plain = {
+      "no-config": "There is no config.json yet, so there is nothing to update.",
+      "nothing-to-migrate": "Your config already uses the current option names.",
+      "invalid-json":
+        "config.json is not a readable JSON object, so it cannot be updated. Fix the file and try again.",
+    };
+    if (plain[result.status]) {
+      await dialog.showMessageBox(this.window, {
+        type: "info",
+        title: TITLE,
+        message: plain[result.status],
+      });
+      return;
+    }
+
+    if (result.status === "blocked") {
+      await dialog.showMessageBox(this.window, {
+        type: "warning",
+        title: TITLE,
+        message: "Nothing could be updated automatically.",
+        detail: [
+          "These options have new names, but the namespace they move into is",
+          "already set to something that is not a group of settings:",
+          ...result.skipped.map((name) => `  • ${name}`),
+        ].join("\n"),
+      });
+      return;
+    }
+
+    if (result.status === "write-failed") {
+      await dialog.showMessageBox(this.window, {
+        type: "error",
+        title: TITLE,
+        message: "The updated config could not be written.",
+        detail: result.error,
+      });
+      return;
+    }
+
+    const count = result.renamed.length;
+    const detail = [
+      `${count} ${count === 1 ? "option has" : "options have"} a new name:`,
+      ...result.renamed.map((name) => `  • ${name}`),
+      "",
+      "Your config.json is untouched. Review the copy, then rename it over",
+      "config.json when you are happy with it.",
+      ...(result.skipped.length
+        ? ["", "Left alone, because their namespace is already set to something else:",
+           ...result.skipped.map((name) => `  • ${name}`)]
+        : []),
+      ...(result.warnings.length
+        ? ["", "The copy needs a look first:", ...result.warnings.map((w) => `  • ${w}`)]
+        : []),
+    ].join("\n");
+
+    const { response } = await dialog.showMessageBox(this.window, {
+      type: result.warnings.length ? "warning" : "info",
+      title: TITLE,
+      // The directory too, so someone whose desktop has no handler for .json
+      // can still find the file after "Open It" does nothing.
+      message: `Written to ${MIGRATED_FILE} in ${result.dir}`,
+      detail,
+      buttons: ["Open It", "Close"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (response !== 0) return;
+
+    // Electron resolves with a non-empty error string when the OS has no
+    // handler; matching app/downloadManager, log only that it failed, since
+    // the string can carry the path.
+    const openError = await shell.openPath(result.file);
+    if (openError) {
+      console.warn("[Config] Could not open the updated config", { failed: true });
+    }
   }
 
   restoreSettings() {
@@ -247,8 +473,58 @@ class Menus {
     }
   }
 
+  // Opens config.json in the user's default editor. The file usually does not
+  // exist — startup logs "No config file found ... using default values" — and
+  // shell.openPath on a missing path just returns an error string, so an empty
+  // stub is written first. That also gives the user something to edit rather
+  // than an empty buffer they have to save into the right place themselves.
+  async openConfigFile() {
+    const configFile = this.configGroup.configFilePath;
+    try {
+      if (!fs.existsSync(configFile)) {
+        fs.mkdirSync(path.dirname(configFile), { recursive: true });
+        fs.writeFileSync(configFile, "{}\n");
+      }
+    } catch (err) {
+      this.#reportOpenFailure("config file", configFile, err.message);
+      return;
+    }
+    await this.#openPath("config file", configFile);
+  }
+
+  async openConfigFolder() {
+    await this.#openPath("config folder", this.configGroup.configPath);
+  }
+
+  // shell.openPath resolves to an empty string on success and to the reason as
+  // a string on failure — it does not reject — so the result has to be checked.
+  async #openPath(what, target) {
+    let reason;
+    try {
+      reason = await shell.openPath(target);
+    } catch (err) {
+      reason = err.message;
+    }
+    if (reason) {
+      this.#reportOpenFailure(what, target, reason);
+    }
+  }
+
+  #reportOpenFailure(what, target, reason) {
+    console.error(`Failed to open ${what} at ${target}: ${reason}`);
+    dialog.showMessageBoxSync(this.window, {
+      message: `Could not open the ${what}.\n\n${target}\n\n${reason}`,
+      title: "Open config",
+      type: "error",
+    });
+  }
+
   addProfile() {
     this.addProfileDialog?.show();
+  }
+
+  manageProfiles() {
+    this.manageProfileDialog?.show();
   }
 
   // Switch the active profile via ProfilesManager. The emitter then fires
@@ -268,7 +544,18 @@ class Menus {
 
   updateMenu() {
     const menu = appMenu(this);
-    this.window.setMenu(Menu.buildFromTemplate([menu]));
+    this.#attachMenu(menu);
+    // Re-assert the hidden bar: profile events rebuild the menu constantly
+    // (add/update/switch/remove), and without this the rebuild would silently
+    // restore a bar the user configured away. Gated on the flag so flag-off
+    // behaviour stays byte-identical to pre-feature (where updateMenu also
+    // re-attached the menu unconditionally).
+    if (
+      this.configGroup.startupConfig.menubar === "hidden" &&
+      this.#multiAccountOn()
+    ) {
+      this.window.setMenuBarVisibility(false);
+    }
     this.tray?.setContextMenu(menu.submenu);
 
     // Notify renderer process of config changes that affect renderer behavior
@@ -280,6 +567,7 @@ class Menus {
       disableNotificationWindowFlash: this.configGroup.startupConfig.disableNotificationWindowFlash,
       disableBadgeCount: this.configGroup.startupConfig.disableBadgeCount,
       defaultNotificationUrgency: this.configGroup.startupConfig.defaultNotificationUrgency,
+      appIcon: this.configGroup.startupConfig.appIcon,
     });
   }
 
@@ -463,6 +751,28 @@ class Menus {
   }
 }
 
+// The switcher pill is the only legitimate sender of the profile-switcher-*
+// open-dialog channels. Verify the sender actually loaded our local
+// switcher.html — `file:` protocol AND an exact absolute-path match — rather
+// than trusting a pathname suffix, so a remote page served at
+// `…/profileSwitcher/switcher.html` cannot pop the dialogs (#2661 review).
+const SWITCHER_HTML_PATH = path.join(
+  __dirname,
+  "..",
+  "profileSwitcher",
+  "switcher.html"
+);
+
+function isSwitcherPillSender(event) {
+  const senderUrl = event.sender?.getURL?.() || "";
+  if (!senderUrl.startsWith("file:")) return false;
+  try {
+    return fileURLToPath(senderUrl) === SWITCHER_HTML_PATH;
+  } catch {
+    return false;
+  }
+}
+
 function saveSettingsInternal(_event, arg) {
   fs.writeFileSync(
     path.join(app.getPath("userData"), "teams_settings.json"),
@@ -489,10 +799,7 @@ function assignContextMenuHandler(menus) {
   return (_event, params) => {
     const menu = new Menu();
 
-    // Add each spelling suggestion
     assignReplaceWordHandler(params, menu, menus);
-
-    // Allow users to add the misspelled word to the dictionary
     assignAddToDictionaryHandler(params, menu, menus);
 
     if (menu.items.length > 0) {
@@ -646,12 +953,12 @@ function chooseLanguage(item, menus) {
   );
 
   if (menus.onSpellCheckerLanguageChanged) {
-    menus.onSpellCheckerLanguageChanged.apply(menus, [changes]);
+    menus.onSpellCheckerLanguageChanged(changes);
   }
 }
 
 function removeFromList(list, item) {
-  const itemIndex = list.findIndex((l) => l == item);
+  const itemIndex = list.findIndex((l) => l === item);
   if (itemIndex >= 0) {
     list.splice(itemIndex, 1);
   }
@@ -660,7 +967,7 @@ function removeFromList(list, item) {
 }
 
 function addToList(list, item) {
-  const itemIndex = list.findIndex((l) => l == item);
+  const itemIndex = list.findIndex((l) => l === item);
   if (itemIndex < 0) {
     list.push(item);
   }

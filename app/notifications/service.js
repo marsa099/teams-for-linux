@@ -1,5 +1,9 @@
 const { Notification, nativeImage, ipcMain } = require("electron");
+const crypto = require("node:crypto");
 const path = require("node:path");
+
+const ICON_FETCH_TIMEOUT_MS = 1000;
+const MAX_ICON_BYTES = 5 * 1024 * 1024;
 
 const USER_STATUS = {
   UNKNOWN: -1,
@@ -38,18 +42,23 @@ class NotificationService {
     ipcMain.handle("show-notification", this.#handleShowNotification.bind(this));
   }
 
-  async #handleShowNotification(_event, options) {
-    return this.#showNotification(options);
+  async #handleShowNotification(event, options) {
+    const notificationId = options?.notificationId || crypto.randomUUID();
+    return this.#showNotification({ ...options, notificationId }, event?.sender);
   }
 
   async #handlePlayNotificationSound(_event, options) {
-    return this.#playNotificationSound(options);
+    // preload's playNotificationSound only rejects non-object values, so a
+    // renderer calling it with no argument reaches us as undefined. Every use
+    // below dereferences options, so normalise at the IPC boundary. A default
+    // parameter would not cover the null case, which preload also lets through.
+    return this.#playNotificationSound(options || {});
   }
 
-  async #showNotification(options) {
+  async #showNotification(options, sender) {
     const startTime = Date.now();
-    console.debug("[TRAY_DIAG] Native notification request received", {
-      title: options.title,
+    console.debug("[NOTIFICATIONS] Native notification request received", {
+      titleLength: options.title?.length || 0,
       bodyLength: options.body?.length || 0,
       hasIcon: !!options.icon,
       type: options.type,
@@ -59,57 +68,169 @@ class NotificationService {
     });
 
     try {
+      const iconPromise = this.#loadIcon(options.icon).catch(() => null);
+
       // Play notification sound if configured (await to catch any errors)
       await this.#playNotificationSound({
         type: options.type,
         audio: "default",
-        title: options.title,
-        body: options.body,
       });
 
-      // Create notification config
+      const icon = await iconPromise;
       const notificationConfig = {
         title: options.title,
         body: options.body,
         urgency: this.#config.defaultNotificationUrgency,
+        timeoutType: options.timeoutType === "never" ? "never" : "default",
       };
 
-      // Only add icon if provided to avoid errors with null/undefined
-      if (options.icon) {
-        notificationConfig.icon = nativeImage.createFromDataURL(options.icon);
-      }
+      if (icon) notificationConfig.icon = icon;
 
-      // Create and show native notification
       const notification = new Notification(notificationConfig);
 
+      // Relay lifecycle events to the renderer that created the notification.
+      // event.sender is the only correct target: with multiAccount each profile
+      // runs in its own WebContentsView on its own session partition
+      // (mainAppWindow/profileViewManager.js), so the root window's webContents
+      // is the wrong renderer and would push one account's ids into another
+      // account's partition. The payload is the opaque notification id and
+      // nothing else; never widen it to title or body.
+      const relay = (channel) => {
+        if (!sender || sender.isDestroyed()) return;
+        sender.send(channel, options.notificationId);
+      };
+
       notification.on("click", () => {
-        console.debug("[TRAY_DIAG] Notification clicked, showing main window");
-        this.#mainWindow.show();
+        // notifications.electron.clickAction controls window behaviour on click
+        // (issue #2647). Defaults to "show" so existing behaviour is unchanged.
+        const clickAction = this.#config.notifications?.electron?.clickAction ?? "show";
+        console.debug(`[NOTIFICATIONS] Notification clicked, clickAction=${clickAction}`);
+        // "none" suppresses the relay too: letting Teams navigate marks the
+        // conversation read and sends a read receipt, which an option
+        // documented as doing nothing must not do behind a hidden window.
+        if (clickAction === "none") return;
+        // Neither show() nor restoreWindow() null-check, so a click arriving
+        // during shutdown would throw out of this emitter and take the relay
+        // with it.
+        const win = this.#mainWindow.getWindow();
+        if (!win || win.isDestroyed()) return;
+        if (clickAction === "restore") {
+          // restore if minimised, show if in the tray, then focus. Whether the
+          // focus is honoured is window-manager dependent on Linux.
+          this.#mainWindow.restoreWindow();
+        } else {
+          this.#mainWindow.show();
+        }
+        // Show first, relay second: backgroundThrottling is on by default, so
+        // route work Teams defers to requestAnimationFrame would sit queued
+        // while the page is still hidden (issue #2768).
+        relay("notification-clicked");
+      });
+
+      notification.on("close", () => {
+        console.debug("[NOTIFICATIONS] Notification dismissed by system");
+        relay("notification-closed");
       });
 
       notification.show();
 
       const totalTime = Date.now() - startTime;
-      console.debug("[TRAY_DIAG] Native notification displayed successfully", {
-        title: options.title,
+      console.debug("[NOTIFICATIONS] Native notification displayed successfully", {
         totalTimeMs: totalTime,
         urgency: this.#config.defaultNotificationUrgency,
         performanceNote: totalTime > 500 ? "Slow notification display detected" : "Normal notification speed"
       });
 
     } catch (error) {
-      console.error("[TRAY_DIAG] Failed to show native notification", {
+      console.error("[NOTIFICATIONS] Failed to show native notification", {
         error: error.message,
-        title: options.title,
         elapsedMs: Date.now() - startTime,
         suggestion: "Check if notification permissions are granted or icon data is valid"
       });
     }
   }
 
+  async #loadIcon(icon) {
+    if (typeof icon !== "string" || !icon) return null;
+
+    if (icon.startsWith("data:")) {
+      return this.#nonEmptyImage(nativeImage.createFromDataURL(icon));
+    }
+
+    const win = this.#mainWindow.getWindow();
+    const url = this.#parseHttpsUrl(icon);
+    const pageUrl = this.#parseHttpsUrl(win?.webContents?.getURL?.());
+    if (!url || !pageUrl || url.origin !== pageUrl.origin) return null;
+
+    const session = win?.webContents?.session;
+    if (!session?.fetch) return null;
+
+    return this.#loadRemoteIcon(session, url);
+  }
+
+  async #loadRemoteIcon(session, url) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), ICON_FETCH_TIMEOUT_MS);
+    try {
+      const response = await session.fetch(url.href, {
+        credentials: "include",
+        redirect: "error",
+        signal: controller.signal,
+      });
+      if (!response.ok) return null;
+
+      const declaredSize = Number(response.headers.get("content-length"));
+      if (declaredSize > MAX_ICON_BYTES) return null;
+
+      const bytes = await this.#readIconBody(response.body);
+      if (!bytes) return null;
+
+      return this.#nonEmptyImage(nativeImage.createFromBuffer(bytes));
+    } catch {
+      console.warn("[NOTIFICATIONS] Could not load remote notification icon");
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  async #readIconBody(body) {
+    const reader = body?.getReader();
+    if (!reader) return null;
+
+    const chunks = [];
+    let size = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return Buffer.concat(chunks, size);
+
+      size += value.byteLength;
+      if (size > MAX_ICON_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(Buffer.from(value));
+    }
+  }
+
+  #parseHttpsUrl(value) {
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" ? url : null;
+    } catch {
+      return null;
+    }
+  }
+
+  #nonEmptyImage(image) {
+    return image.isEmpty() ? null : image;
+  }
+
   async #playNotificationSound(options) {
+    // options can carry the notification title and body (the web path forwards
+    // them over play-notification-sound), so log only the sound-relevant fields.
     console.debug(
-      `Notification => Type: ${options.type}, Audio: ${options.audio}, Title: ${options.title}, Body: ${options.body}`
+      `[NOTIFICATIONS] Sound requested => type: ${options.type}, audio: ${options.audio}`
     );
 
     // Player failed to load or notification sound disabled in config
@@ -118,7 +239,6 @@ class NotificationService {
       return;
     }
 
-    // Get current user status via injected function
     const userStatus = this.#getUserStatus();
 
     // Notification sound disabled if not available set in config and user status is not "Available" (or is unknown)
@@ -141,7 +261,7 @@ class NotificationService {
       return;
     }
 
-    console.debug("No notification sound played", this.#soundPlayer, options);
+    console.debug(`[NOTIFICATIONS] No sound configured for type: ${options.type}`);
   }
 }
 

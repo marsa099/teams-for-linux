@@ -8,35 +8,72 @@ class NavigationButtons {
   #initialized = false;
   #backButton = null;
   #forwardButton = null;
+  #observer = null;
+  #checkScheduled = false;
 
-  init(config) {
+  init() {
     if (this.#initialized) {
       return;
     }
 
-    // Note: config parameter kept for API consistency with other modules
-    // but not currently used by navigation buttons functionality
     this.#initialized = true;
-
-    // Inject buttons with retry logic for Teams UI elements
-    // Note: DOM is already ready (preload.js waits for DOMContentLoaded)
-    // but Teams-specific elements may not be rendered yet
-    this.#waitForTeamsAndInject();
+    this.#startInjecting();
   }
 
-  #waitForTeamsAndInject() {
-    const maxRetries = 3;
-    let retries = 0;
+  // Teams renders its top bar after load and Microsoft restructures it without
+  // notice, which previously left the buttons missing once a fixed 3-retry
+  // budget ran out (#2671). Inject immediately, then keep a MutationObserver
+  // running so the buttons (re)appear whenever the anchor mounts or a Teams
+  // re-render removes our container.
+  #startInjecting() {
+    this.injectNavigationButtons();
 
-    const tryInject = () => {
-      if (this.injectNavigationButtons() || retries >= maxRetries) {
-        return;
+    const target = document.body || document.documentElement;
+    if (!target || typeof MutationObserver === "undefined") {
+      return;
+    }
+
+    this.#observer = new MutationObserver(() => {
+      // Only react when our container is actually missing, so a present,
+      // healthy injection does not arm a re-check timer on every Teams
+      // mutation for the lifetime of the session.
+      if (!document.getElementById("tfl-nav-buttons-container")) {
+        this.#scheduleInjectCheck();
       }
-      retries++;
-      setTimeout(tryInject, 1000 * retries);
-    };
+    });
+    this.#observer.observe(target, { childList: true, subtree: true });
+  }
 
-    tryInject();
+  // Coalesce a burst of mutations into a single debounced re-injection; the
+  // observer only calls this while our container is absent.
+  #scheduleInjectCheck() {
+    if (this.#checkScheduled) {
+      return;
+    }
+    this.#checkScheduled = true;
+    setTimeout(() => {
+      this.#checkScheduled = false;
+      if (!document.getElementById("tfl-nav-buttons-container")) {
+        this.injectNavigationButtons();
+      }
+    }, 250);
+  }
+
+  // The Teams search region is the injection anchor; buttons go immediately
+  // before it. Try the known data-tid first, then fall back to the search
+  // landmark so a top-bar restructure does not drop the buttons entirely.
+  #findInjectionAnchor() {
+    const selectors = [
+      '[data-tid="search-f6-navigation-region"]',
+      '[role="search"]',
+    ];
+    for (const selector of selectors) {
+      const el = document.querySelector(selector);
+      if (el?.parentNode) {
+        return el;
+      }
+    }
+    return null;
   }
 
   createNavigationButton(id, label, svgPath) {
@@ -46,14 +83,12 @@ class NavigationButtons {
     button.title = label;
     button.setAttribute('aria-label', label);
 
-    // Create SVG element
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('width', '20');
     svg.setAttribute('height', '20');
     svg.setAttribute('viewBox', '0 0 20 20');
     svg.setAttribute('fill', 'currentColor');
 
-    // Create path element
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     path.setAttribute('d', svgPath);
 
@@ -64,40 +99,34 @@ class NavigationButtons {
   }
 
   injectNavigationButtons() {
-    // Check if buttons already exist
     if (document.getElementById('tfl-nav-buttons-container')) {
       console.debug('Navigation buttons already exist');
       return true;
     }
 
-    // Check if document body is ready
     if (!document.body) {
       console.debug('Document body not ready yet');
       return false;
     }
 
-    // Find the search navigation region - we'll insert buttons BEFORE it (as a sibling)
-    const searchRegion = document.querySelector('[data-tid="search-f6-navigation-region"]');
+    const searchRegion = this.#findInjectionAnchor();
 
     if (!searchRegion) {
-      console.debug('Search navigation region not found, buttons not injected yet');
+      console.debug('Search region anchor not found, buttons not injected yet');
       return false;
     }
 
     console.debug('Found search navigation region, injecting navigation buttons before it');
 
-    // Create container for navigation buttons
     const container = document.createElement('div');
     container.id = 'tfl-nav-buttons-container';
 
-    // Create back button
     const backButton = this.createNavigationButton(
       'tfl-nav-back',
       'Go back',
       'M12.707 15.707a1 1 0 01-1.414 0l-5-5a1 1 0 010-1.414l5-5a1 1 0 111.414 1.414L8.414 10l4.293 4.293a1 1 0 010 1.414z'
     );
 
-    // Create forward button
     const forwardButton = this.createNavigationButton(
       'tfl-nav-forward',
       'Go forward',
@@ -107,14 +136,10 @@ class NavigationButtons {
     container.appendChild(backButton);
     container.appendChild(forwardButton);
 
-    // Insert before the search region as a sibling (not inside it)
     searchRegion.parentNode.insertBefore(container, searchRegion);
     console.debug('Navigation buttons injected as sibling before search region');
 
-    // Add event listeners
     this.setupEventListeners();
-
-    // Inject CSS styles
     this.injectStyles();
 
     console.debug('Navigation buttons injected successfully');
@@ -144,10 +169,8 @@ class NavigationButtons {
       });
     }
 
-    // Update button states based on navigation history
     this.updateButtonStates();
 
-    // Listen for navigation events to update button states
     if (globalThis.electronAPI?.onNavigationStateChanged) {
       globalThis.electronAPI.onNavigationStateChanged((event, canGoBack, canGoForward) => {
         this.updateButtonStates(canGoBack, canGoForward);
@@ -166,7 +189,6 @@ class NavigationButtons {
       return;
     }
 
-    // Use cached button references for better performance
     if (this.#backButton) {
       this.#backButton.disabled = !canGoBack;
       this.#backButton.classList.toggle('disabled', !canGoBack);
@@ -181,7 +203,6 @@ class NavigationButtons {
   injectStyles() {
     const styleId = 'tfl-navigation-buttons-style';
 
-    // Don't inject styles if they already exist
     if (document.getElementById(styleId)) {
       return;
     }

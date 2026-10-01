@@ -1,4 +1,3 @@
-// Import token cache for authentication provider integration
 const TokenCache = require('./tokenCache');
 
 class ReactHandler {
@@ -31,10 +30,6 @@ class ReactHandler {
     return teams2CoreServices?.clientPreferences?.clientPreferences;
   }
 
-  /**
-   * Get the status of the token cache injection
-   * @returns {object} Status object with injected flag and retry capability
-   */
   getTokenCacheStatus() {
     return {
       injected: this._tokenCacheInjected,
@@ -125,10 +120,8 @@ class ReactHandler {
         return { success: false, error: 'acquireToken method not found' };
       }
 
-      // Get correlation from core services if available
       const correlation = teams2CoreServices?.correlation;
 
-      // Merge default options with provided options
       const tokenOptions = {
         correlation: correlation,
         forceRenew: options.forceRenew || false,
@@ -141,7 +134,7 @@ class ReactHandler {
       console.debug(`[GRAPH_API] Acquiring token for resource: ${resource}`);
       const result = await authProvider.acquireToken(resource, tokenOptions);
 
-      if (result && result.token) {
+      if (result?.token) {
         console.debug('[GRAPH_API] Token acquired successfully', {
           hasToken: true,
           fromCache: result.fromCache,
@@ -187,10 +180,8 @@ class ReactHandler {
         return false;
       }
 
-      // Perform the injection
       authProvider._tokenCache = TokenCache;
 
-      // Verify injection success
       if (this._validateTokenCacheInjection(authProvider)) {
         this._tokenCacheInjected = true;
         return true;
@@ -206,7 +197,6 @@ class ReactHandler {
     }
   }
 
-  // Validate token cache injection was successful
   _validateTokenCacheInjection(authProvider) {
     const tokenCache = authProvider._tokenCache;
     if (!tokenCache) return false;
@@ -236,12 +226,12 @@ class ReactHandler {
   }
 
   _validateDomain() {
-    const isTeamsDomain = this._isAllowedTeamsDomain(globalThis.location.hostname);
-    if (!isTeamsDomain) {
-      console.warn('ReactHandler: Not in Teams domain context');
-      return false;
-    }
-    return true;
+    // Returns false silently when not on a Teams domain. The state is
+    // expected during login redirects, sign-out, and session-expiry
+    // interstitials, and the caller (typically a 1Hz retry poll) handles
+    // the negative case by re-trying. Logging here would fire once per
+    // second for the entire pre-auth window with no actionable signal.
+    return this._isAllowedTeamsDomain(globalThis.location.hostname);
   }
 
   _validateDocument() {
@@ -296,8 +286,9 @@ class ReactHandler {
     ];
 
     // Handle Microsoft Cloud App Security (MCAS) suffix. eg: teams.cloud.microsoft.mcas.ms
-    if(hostname.endsWith('.mcas.ms')){
-      hostname = hostname.slice(0, -8);
+    const MCAS_SUFFIX = '.mcas.ms';
+    if (hostname.endsWith(MCAS_SUFFIX)) {
+      hostname = hostname.slice(0, -MCAS_SUFFIX.length);
     }
     
     for (const domain of allowedDomains) {
@@ -355,7 +346,7 @@ class ReactHandler {
 const reactHandlerInstance = new ReactHandler();
 
 // Make available for browser injection
-if (globalThis.window !== undefined) {
+if (globalThis.window) {
   globalThis.window.teamsForLinuxReactHandler = reactHandlerInstance;
 }
 

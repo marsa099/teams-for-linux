@@ -2,7 +2,7 @@
 title: "Module Index"
 sidebar_position: 4
 type: reference
-last_updated: 2025-11-19
+last_updated: 2026-05-26
 tags: [architecture, modules, reference]
 ---
 
@@ -32,17 +32,24 @@ User-facing features and integrations.
 | Module | Path | Purpose | Documentation |
 |--------|------|---------|---------------|
 | **Auto Updater** | `app/autoUpdater/` | In-app auto-update for AppImage distributions | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/autoUpdater/README.md) |
-| **MQTT** | `app/mqtt/` | MQTT broker integration for status publishing | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/mqtt/README.md), [User Guide](../mqtt-integration.md) |
+| **MQTT** | `app/mqtt/` | MQTT broker integration for status publishing, media state (microphone, camera, in-call, screen-sharing), and Home Assistant auto-discovery | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/mqtt/README.md), [User Guide](../mqtt-integration.md) |
 | **Screen Sharing** | `app/screenSharing/` | Native screen/window selection and preview | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/screenSharing/README.md), [User Guide](../screen-sharing.md) |
 | **Custom Background** | `app/customBackground/` | Virtual background management | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/customBackground/README.md), [User Guide](../custom-backgrounds.md) |
 | **Custom CSS** | `app/customCSS/` | Custom styling and themes | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/customCSS/README.md) |
 | **Notifications** | `app/notifications/` | Native desktop notifications & sound playback | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/notifications/README.md) |
 | **Notification System** | `app/notificationSystem/` | Custom in-app toast notifications | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/notificationSystem/README.md) |
 | **Incoming Call Toast** | `app/incomingCallToast/` | Call notification toasts | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/incomingCallToast/README.md) |
+| **Download Manager** | `app/downloadManager/` | Surfaces file download lifecycle as system notifications ([#2512](https://github.com/IsmaelMartinez/teams-for-linux/issues/2512)) | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/downloadManager/README.md) |
 | **InTune SSO** | `app/intune/` | Microsoft InTune single sign-on integration | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/intune/README.md), [User Guide](../intune-sso.md) |
 | **Global Shortcuts** | `app/globalShortcuts/` | System-wide keyboard shortcuts | No README yet |
-| **Graph API** | `app/graphApi/` | Microsoft Graph API integration for calendar and mail | [Research](./research/graph-api-integration-research.md) |
+| **Graph API** | `app/graphApi/` | Microsoft Graph API integration for calendar and mail | [ADR-030](./adr/030-graph-api-teams-session-token.md), [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/graphApi/README.md) |
 | **Speaking Indicator** | `app/browser/tools/speakingIndicator.js` | Visual overlay showing microphone state during calls (speaking/silent/muted) via RTCPeerConnection.getStats(). Also provides WebRTC-based call state fallback for reliable MQTT in-call detection ([#2358](https://github.com/IsmaelMartinez/teams-for-linux/issues/2358)). | [PR #2299](https://github.com/IsmaelMartinez/teams-for-linux/pull/2299) |
+| **Quick Chat** | `app/quickChat/` | Quick Chat modal with People API search and inline messaging via Graph API | [ADR-014](./adr/014-quick-chat-deep-link-approach.md), [ADR-015](./adr/015-quick-chat-inline-messaging.md) |
+| **WebAuthn / FIDO2** | `app/webauthn/` | Hardware security key support for Linux via fido2-tools interception of navigator.credentials | [ADR-021](./adr/021-webauthn-fido2-linux.md) |
+| **Client Certificate PIN** | `app/clientCertificate/` | Linux smartcard/NSS client-certificate PIN dialog built on the shared secure prompt ([#2639](https://github.com/IsmaelMartinez/teams-for-linux/issues/2639)) | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/clientCertificate/README.md) |
+| **Profiles Manager** | `app/profilesManager/` | Multi-account profile storage, switching, and lifecycle management | [ADR-020](./adr/020-multi-account-profile-switcher.md) |
+| **Profile Dialogs** | `app/profileDialogs/` | Add-profile, manage-profiles, and switch-profile UI dialogs | [ADR-020](./adr/020-multi-account-profile-switcher.md) |
+| **Join Meeting Dialog** | `app/joinMeetingDialog/` | Join Meeting dialog for deep-link navigation handling | — |
 
 ## System Integration Modules
 
@@ -52,6 +59,7 @@ OS-level integrations and platform-specific functionality.
 |--------|------|---------|---------------|
 | **Idle Monitor** | `app/idle/` | System idle state monitoring & status correlation | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/idle/README.md) |
 | **Login** | `app/login/` | Authentication and login flow management | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/login/README.md) |
+| **SSO Password Pre-fill** | `app/ssoPasswordPrefill/` | Opt-in pre-fill of the Microsoft/federated **web** sign-in form: account, password from a command, optional auto-advance and MFA method ([#2794](https://github.com/IsmaelMartinez/teams-for-linux/issues/2794)). Distinct from `app/login/`, which drives the native HTTP Basic/NTLM dialog. | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/ssoPasswordPrefill/README.md) |
 | **Menus** | `app/menus/` | Application menu bar and context menus | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/menus/README.md) |
 | **Spell Check Provider** | `app/spellCheckProvider/` | Text spelling correction integration | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/spellCheckProvider/README.md) |
 
@@ -61,6 +69,7 @@ Supporting infrastructure, utilities, and cross-cutting concerns.
 
 | Module | Path | Purpose | Documentation |
 |--------|------|---------|---------------|
+| **Shared** | `app/_shared/` | Cross-module shared utilities and constants | — |
 | **Audio** | `app/audio/` | Sound playback via system audio commands (`paplay`, `aplay`, `afplay`) | — |
 | **Utils** | `app/utils/` | Shared utilities (window positioning, log sanitization) | — |
 | **Helpers** | `app/helpers/` | Shared utility functions and common logic | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/helpers/README.md) |

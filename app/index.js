@@ -5,20 +5,26 @@ const {
   globalShortcut,
   systemPreferences,
   nativeImage,
+  session,
 } = require("electron");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const CustomBackground = require("./customBackground");
+const CustomStickers = require("./customStickers");
 const { MQTTClient } = require("./mqtt");
 const MQTTMediaStatusService = require("./mqtt/mediaStatusService");
 const HomeAssistantDiscovery = require("./mqtt/homeAssistantDiscovery");
 const GraphApiClient = require("./graphApi");
 const { registerGraphApiHandlers } = require("./graphApi/ipcHandlers");
-const { validateIpcChannel, allowedChannels } = require("./security/ipcValidator");
+const { allowedChannels } = require("./security/ipcValidator");
+const { installIpcSecurity } = require("./security/ipcSecurity");
+const { sanitize: sanitizePii } = require("./utils/logSanitizer");
+const { isPreLoginAuthNoise, parseChunkLoadFailure, formatChunkLoadWarning } = require("./utils/rendererErrors");
 const { register: registerGlobalShortcuts, sendKeyboardEventToWindow } = require("./globalShortcuts");
 const CommandLineManager = require("./startup/commandLine");
 const NotificationService = require("./notifications/service");
 const CustomNotificationManager = require("./notificationSystem");
+const DownloadManager = require("./downloadManager");
 const QuickChatManager = require("./quickChat");
 const ScreenSharingService = require("./screenSharing/service");
 const PartitionsManager = require("./partitions/manager");
@@ -26,8 +32,33 @@ const ProfilesManager = require("./profilesManager");
 const ProfileViewManager = require("./mainAppWindow/profileViewManager");
 const IdleMonitor = require("./idle/monitor");
 const AutoUpdater = require("./autoUpdater");
+const WebAuthn = require("./webauthn");
 const os = require("node:os");
 const isMac = os.platform() === "darwin";
+
+// Name notifications "Teams for Linux" instead of the raw app name.
+// Desktop environments read two different fields for the header: KDE shows
+// the notification's app_name (which Electron takes from app.name), GNOME
+// resolves the desktop-entry hint and shows that entry's Name. Cover both.
+// app.name also seeds the default userData path, so pin the path first or
+// existing installs would silently switch config directory.
+if (process.platform === "linux") {
+  const userDataPath = app.getPath("userData");
+  app.setName("Teams for Linux");
+  app.setPath("userData", userDataPath);
+
+  // The desktop-entry hint must be set unconditionally: Electron pre-sets
+  // CHROME_DESKTOP itself before app code runs, so guarding on the env var
+  // being absent would be a no-op. Sandboxed installs export the entry
+  // under their own id.
+  if (process.env.FLATPAK_ID) {
+    app.setDesktopName(`${process.env.FLATPAK_ID}.desktop`);
+  } else if (process.env.SNAP_INSTANCE_NAME) {
+    app.setDesktopName(`${process.env.SNAP_INSTANCE_NAME}_teams-for-linux.desktop`);
+  } else {
+    app.setDesktopName("teams-for-linux.desktop");
+  }
+}
 
 const { NETWORK_ERROR_PATTERNS } = require("./config/defaults");
 
@@ -76,7 +107,6 @@ if (process.env.E2E_USER_DATA_DIR) {
 // This must be executed before loading the config file.
 CommandLineManager.addSwitchesBeforeConfigLoad();
 
-// Load config file.
 const { AppConfiguration } = require("./appConfiguration");
 const appConfig = new AppConfiguration(
   app.getPath("userData"),
@@ -91,19 +121,18 @@ CommandLineManager.addSwitchesAfterConfigLoad(config);
 // ADR-020: multi-account is mutually exclusive with Intune MAM.
 // The Linux D-Bus Microsoft Identity Broker has undocumented behavior
 // around concurrent enrollments for different UPNs on one machine, so
-// force multi-account off when Intune is enabled via either the current
-// `auth.intune.enabled` or the legacy `ssoInTuneEnabled` flag.
-const intuneEnabled =
-  config.auth?.intune?.enabled || config.ssoInTuneEnabled;
+// force multi-account off when Intune is enabled.
+const intuneEnabled = config.auth?.intune?.enabled;
 if (config.multiAccount?.enabled && intuneEnabled) {
   const warning =
-    "[MultiAccount] Intune SSO is enabled (auth.intune.enabled or ssoInTuneEnabled); multi-account is not supported in this configuration and will be disabled for this session.";
+    "[MultiAccount] Intune SSO is enabled (auth.intune.enabled); multi-account is not supported in this configuration and will be disabled for this session.";
   console.warn(warning);
   config.warnings = [...(config.warnings || []), warning];
   config.multiAccount.enabled = false;
 }
 
 let userStatus = -1;
+let microphoneControlState = 'unknown';
 let mqttClient = null;
 let mqttMediaStatusService = null;
 let haDiscovery = null;
@@ -114,14 +143,15 @@ const { createPlayer } = require("./audio/player");
 const player = createPlayer();
 
 const certificateModule = require("./certificate");
+const clientCertificate = require("./clientCertificate");
+const backgroundPortal = require("./backgroundPortal");
 const CacheManager = require("./cacheManager");
 const gotTheLock = app.requestSingleInstanceLock();
 const mainAppWindow = require("./mainAppWindow");
 
-// Getter function for user status - injected into NotificationService to break coupling
+// Injected into NotificationService to break coupling
 const getUserStatus = () => userStatus;
 
-// Initialize notification service with dependencies
 const notificationService = new NotificationService(
   player,
   config,
@@ -129,10 +159,8 @@ const notificationService = new NotificationService(
   getUserStatus
 );
 
-// Initialize screen sharing service
 const screenSharingService = new ScreenSharingService();
 
-// Initialize partitions manager with dependencies
 const partitionsManager = new PartitionsManager(appConfig.settingsStore);
 
 // ADR-020: ProfilesManager owns persistence for the multi-account switcher.
@@ -141,16 +169,47 @@ const partitionsManager = new PartitionsManager(appConfig.settingsStore);
 // keeping the renderer surface byte-identical with the flag off.
 const profilesManager = new ProfilesManager(appConfig.settingsStore);
 
-// Phase 1c.1: per-profile WebContentsView lifecycle. Only constructed when
-// the multi-account flag is on; the manager is wired to the main window
+// Per-profile WebContentsView lifecycle. Only constructed when the
+// multi-account flag is on; the manager is wired to the main window
 // after `mainAppWindow.onAppReady` resolves.
 let profileViewManager = null;
 
-// Initialize idle monitor with dependencies
 const idleMonitor = new IdleMonitor(config, getUserStatus);
 
-// Initialize custom notification manager for toast notifications
 const customNotificationManager = new CustomNotificationManager(config, mainAppWindow);
+
+// Issue #2512: Electron silently saves downloads to ~/Downloads with no UI
+// feedback unless `session.on('will-download', …)` is wired up. The manager
+// itself attaches to the Teams session inside handleAppReady once the main
+// window has been created (the partition is provisioned at that point).
+// `mainAppWindow` is passed so the manager can drive the taskbar progress bar.
+// On Linux, wire in two D-Bus emitters that complement each other:
+//   - `jobViewEmitter`: per-download progress in KDE Plasma's notification
+//     widget (same surface users see for Firefox / Dolphin / KIO).
+//   - `launcherEntryEmitter`: aggregate progress on the dock icon for
+//     GNOME/Ubuntu users running Ubuntu Dock or Dash-to-Dock (the largest
+//     Linux DE audience). Bypasses Electron's `setProgressBar` Linux gate.
+// Both degrade to no-op if their respective service isn't on the bus, so
+// non-KDE / non-GNOME setups fall back to the window-title `[N%]` prefix.
+let jobEmitter = null;
+let launcherEmitter = null;
+if (os.platform() === "linux") {
+  try {
+    jobEmitter = require("./downloadManager/jobViewEmitter");
+  } catch (error) {
+    console.warn("[DownloadManager] JobView emitter unavailable", {
+      message: error.message,
+    });
+  }
+  try {
+    launcherEmitter = require("./downloadManager/launcherEntryEmitter");
+  } catch (error) {
+    console.warn("[DownloadManager] LauncherEntry emitter unavailable", {
+      message: error.message,
+    });
+  }
+}
+const downloadManager = new DownloadManager(config, mainAppWindow, jobEmitter, launcherEmitter);
 
 if (isMac) {
   requestMediaAccess();
@@ -178,39 +237,9 @@ if (gotTheLock) {
 
   // IPC Security: wrap handler-registration methods so every renderer-initiated
   // IPC call is validated against the allowlist in app/security/ipcValidator.js.
-  const originalIpcHandle = ipcMain.handle.bind(ipcMain);
-  const originalIpcOn = ipcMain.on.bind(ipcMain);
-  const originalIpcOnce = ipcMain.once.bind(ipcMain);
-
-  ipcMain.handle = (channel, handler) => {
-    return originalIpcHandle(channel, (event, ...args) => {
-      if (!validateIpcChannel(channel, args.length > 0 ? args[0] : null)) {
-        console.error(`[IPC Security] Rejected handle request for channel: ${channel}`);
-        return Promise.reject(new Error(`Unauthorized IPC channel: ${channel}`));
-      }
-      return handler(event, ...args);
-    });
-  };
-
-  ipcMain.on = (channel, handler) => {
-    return originalIpcOn(channel, (event, ...args) => {
-      if (!validateIpcChannel(channel, args.length > 0 ? args[0] : null)) {
-        console.error(`[IPC Security] Rejected event for channel: ${channel}`);
-        return;
-      }
-      return handler(event, ...args);
-    });
-  };
-
-  ipcMain.once = (channel, handler) => {
-    return originalIpcOnce(channel, (event, ...args) => {
-      if (!validateIpcChannel(channel, args.length > 0 ? args[0] : null)) {
-        console.error(`[IPC Security] Rejected event for channel: ${channel}`);
-        return;
-      }
-      return handler(event, ...args);
-    });
-  };
+  // The wrapping also covers removal, so listeners registered per short-lived
+  // window can actually be taken off again. See app/security/ipcSecurity.js.
+  installIpcSecurity(ipcMain);
 
   // Restart application when configuration file changes
   ipcMain.on("config-file-changed", restartApp);
@@ -219,30 +248,37 @@ if (gotTheLock) {
     return config;
   });
 
-  // Initialize notification service IPC handlers
   notificationService.initialize();
-
-  // Initialize screen sharing service IPC handlers
   screenSharingService.initialize();
-
-  // Initialize partitions manager IPC handlers
   partitionsManager.initialize();
 
-  // Initialize profiles manager IPC handlers (multi-account, ADR-020)
   if (config.multiAccount?.enabled) {
     profilesManager.initialize();
   }
 
-  // Initialize idle monitor IPC handlers
   idleMonitor.initialize();
-
-  // Initialize custom notification manager for toast notifications
   customNotificationManager.initialize();
 
   // Handle user status changes from Teams (e.g., Available, Busy, Away)
   ipcMain.handle("user-status-changed", userStatusChangedHandler);
   // Set application badge count (dock/taskbar notification)
   ipcMain.handle("set-badge-count", setBadgeCountHandler);
+
+  // Update Dock icon with status overlay on macOS
+  ipcMain.on("dock-icon-update", (_event, dataUrl) => {
+    if (process.platform === "darwin" && app.dock) {
+      if (dataUrl) {
+        const img = nativeImage.createFromDataURL(dataUrl);
+        app.dock.setIcon(img);
+      } else {
+        const path = require("node:path");
+        const defaultIcon = nativeImage.createFromPath(
+          path.join(config.appPath, "assets/icons/icon-256x256.png")
+        );
+        app.dock.setIcon(defaultIcon);
+      }
+    }
+  });
   // Get application version number
   ipcMain.handle("get-app-version", async () => {
     return config.appVersion;
@@ -280,13 +316,30 @@ if (gotTheLock) {
     // Payload is constructed and length-capped in app/browser/preload.js;
     // prior to this handler + the ipcValidator allowlist entry these
     // messages were silently dropped. Fields are run through
-    // sanitizeRendererLogField to scrub URL query strings before logging.
+    // sanitizeRendererLogField to scrub PII before logging.
     try {
-      console.error("[Renderer] Unhandled rejection:", {
+      // Run the chunk and noise checks on the raw message — the sanitizer may
+      // strip query strings / fragments that contain the auth error code.
+      const chunk = parseChunkLoadFailure(errorData?.message);
+      if (chunk) console.warn(formatChunkLoadWarning(chunk));
+      const preLoginNoise = isPreLoginAuthNoise(errorData?.message);
+      const log = chunk || preLoginNoise ? console.debug : console.error;
+      log("[Renderer] Unhandled rejection:", {
         message: sanitizeRendererLogField(errorData?.message, "unknown"),
         stack: sanitizeRendererLogField(errorData?.stack),
         timestamp: toFiniteNumber(errorData?.timestamp, Date.now()),
       });
+      // Some auth failures only surface as unhandled promise rejections from MSAL
+      // token warming (e.g. "interaction_required"/"InteractionRequired" from
+      // acquireTokenV2) and never hit console-message or window-error — feed the
+      // raw (unsanitized) message to auth-failure detection. Rejections carry no
+      // source URL, so detection's trusted-source check is skipped (empty source).
+      // The pre-login-noise check above only down-levels the LOG; it must not
+      // gate detection: the reliable "InteractionRequired" signal arrives inside
+      // these noise-matched messages, so always forward. maybeScheduleAuthRecovery
+      // does its own filtering and only acts on InteractionRequired /
+      // interaction_required (login_required and AuthFailed are logged, not acted on).
+      mainAppWindow.notifyRendererError(errorData?.message, undefined);
     } catch (err) {
       console.error("[Renderer] Failed to log unhandled-rejection:", err);
     }
@@ -295,7 +348,11 @@ if (gotTheLock) {
   // Log renderer-side uncaught window errors
   ipcMain.on("window-error", (_event, errorData) => {
     try {
-      console.error("[Renderer] Window error:", {
+      const chunk = parseChunkLoadFailure(errorData?.message);
+      if (chunk) console.warn(formatChunkLoadWarning(chunk));
+      const preLoginNoise = isPreLoginAuthNoise(errorData?.message);
+      const log = chunk || preLoginNoise ? console.debug : console.error;
+      log("[Renderer] Window error:", {
         message: sanitizeRendererLogField(errorData?.message, "unknown"),
         filename: sanitizeRendererLogField(errorData?.filename, "") || "",
         lineno: toFiniteNumber(errorData?.lineno, 0),
@@ -303,6 +360,12 @@ if (gotTheLock) {
         errorStack: sanitizeRendererLogField(errorData?.errorStack),
         timestamp: toFiniteNumber(errorData?.timestamp, Date.now()),
       });
+      // Some auth failures only surface as uncaught worker errors (e.g.
+      // "Uncaught Error: UPR:") that never hit the console-message path —
+      // feed the raw (unsanitized) message to auth-failure detection. As with
+      // the unhandled-rejection handler, pre-login-noise down-levelling controls
+      // only the log level, never whether detection sees the signal.
+      mainAppWindow.notifyRendererError(errorData?.message, errorData?.filename);
     } catch (err) {
       console.error("[Renderer] Failed to log window-error:", err);
     }
@@ -322,9 +385,13 @@ const MAX_RENDERER_LOG_FIELD_LENGTH = 4096;
 
 /**
  * Sanitizes a renderer-supplied log string before it hits main-process logs.
- * Strips the query string / fragment from any URL in the value (Teams CDN
- * URLs can carry cache-busting or auth tokens) and length-caps the result.
- * Non-strings fall back to the supplied fallback.
+ * Runs it through the shared PII sanitizer (which scrubs emails, UUIDs,
+ * tokens, IPs, URL query strings, user paths, etc.) and length-caps the
+ * result. Non-strings fall back to the supplied fallback.
+ *
+ * Renderer errors from Teams can contain UserId/tenantId/Trace ID/Correlation
+ * ID values that match the shared UUID pattern. CLAUDE.md treats account IDs
+ * and SSO info as must-not-log.
  *
  * @param {unknown} value - The field value to sanitize.
  * @param {any} fallback - Value to return when `value` is not a string.
@@ -333,14 +400,19 @@ const MAX_RENDERER_LOG_FIELD_LENGTH = 4096;
 function sanitizeRendererLogField(value, fallback = null) {
   if (typeof value !== "string") return fallback;
 
-  const redacted = value.replaceAll(
-    /(\b[a-z][a-z0-9+.-]*:\/\/[^\s?#)'"<>]+)[?#][^\s)'"<>]*/gi,
-    "$1[redacted]",
+  // logSanitizer scrubs URL query strings but not fragments. OAuth implicit-flow
+  // tokens land in the fragment (#access_token=…), so strip those first to
+  // preserve the previous behaviour before running the shared sanitizer.
+  const fragmentStripped = value.replaceAll(
+    /(\b[a-z][a-z0-9+.-]*:\/\/[^\s#)'"<>]+)#[^\s)'"<>]*/gi,
+    "$1#[redacted]",
   );
 
-  return redacted.length > MAX_RENDERER_LOG_FIELD_LENGTH
-    ? `${redacted.slice(0, MAX_RENDERER_LOG_FIELD_LENGTH)}…`
-    : redacted;
+  const sanitized = sanitizePii(fragmentStripped);
+
+  return sanitized.length > MAX_RENDERER_LOG_FIELD_LENGTH
+    ? `${sanitized.slice(0, MAX_RENDERER_LOG_FIELD_LENGTH)}…`
+    : sanitized;
 }
 
 /**
@@ -357,25 +429,8 @@ function toFiniteNumber(value, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-/**
- * Handles the 'render-process-gone' event.
- *
- * When a renderer process (which hosts the web content, i.e., the Teams PWA)
- * crashes or becomes unresponsive, Electron emits this event.
- *
- * The decision to immediately quit the application here is a design choice.
- * A renderer process going "gone" often indicates a severe, unrecoverable
- * issue with the web content or its interaction with Electron. Attempting
- * to continue running with a crashed renderer can lead to an unstable
- * and unpredictable user experience (e.g., blank screens, unresponsive UI).
- *
- * Quitting ensures a clean restart, allowing the user to relaunch the
- * application and potentially recover from the issue.
- *
- * @param {Electron.Event} event - The event object.
- * @param {Electron.WebContents} webContents - The WebContents that crashed.
- * @param {Electron.RenderProcessGoneDetails} details - Details about the crash.
- */
+// A gone renderer (the Teams PWA) is usually unrecoverable — continuing
+// leaves a blank or unresponsive window, so quit for a clean restart.
 function onRenderProcessGone(event, webContents, details) {
   console.error(`render-process-gone ${JSON.stringify(details)}`);
   app.quit();
@@ -399,6 +454,10 @@ function handleShortcutCommand({ action, shortcut }) {
 
 function initializeMqtt() {
   mqttClient = new MQTTClient(config);
+
+  app.on('teams-microphone-control-changed', (state) => {
+    microphoneControlState = state;
+  });
 
   async function handleGetCalendarCommand({ startDate, endDate }) {
     if (!startDate || !endDate) {
@@ -437,6 +496,26 @@ function initializeMqtt() {
 
     if (action === 'get-calendar') {
       await handleGetCalendarCommand(command);
+    } else if (action === 'mute' || action === 'unmute') {
+      const desiredState = action === 'mute' ? 'muted' : 'unmuted';
+
+      if (microphoneControlState === desiredState) {
+        console.info(`[MQTT] Ignoring '${action}' command: microphone is already ${desiredState}`);
+        return;
+      }
+
+      if (microphoneControlState !== 'muted' && microphoneControlState !== 'unmuted') {
+        if (command.force === true) {
+          console.warn(`[MQTT] Executing '${action}' with unknown microphone control state due to force=true`);
+          handleShortcutCommand(command);
+          return;
+        }
+
+        console.warn(`[MQTT] Ignoring '${action}' command: microphone control state is '${microphoneControlState}'. Use force=true to override.`);
+        return;
+      }
+
+      handleShortcutCommand(command);
     } else {
       handleShortcutCommand(command);
     }
@@ -521,7 +600,8 @@ function loadMenuToggleSettings() {
     'disableNotificationSoundIfNotAvailable',
     'disableNotificationWindowFlash',
     'disableBadgeCount',
-    'defaultNotificationUrgency'
+    'defaultNotificationUrgency',
+    'appIcon'
   ];
 
   for (const setting of menuToggleSettings) {
@@ -607,10 +687,30 @@ async function handleAppReady() {
 
     const customBackground = new CustomBackground(app, config);
     customBackground.initialize();
+
+    const customStickers = new CustomStickers(app, config);
+    customStickers.initialize();
+
+    // Smartcard / NSS client-certificate PIN dialog (Linux only, issue #2639).
+    // Registered before the main window loads so the handler exists before the
+    // first TLS handshake that may need a token PIN.
+    if (process.platform === "linux" && config.auth?.clientCertificate?.pinDialog?.enabled) {
+      clientCertificate.initialize();
+    }
+
+    // Custom CA allowlist (issue #2762). Installed before the main window loads
+    // so it covers the very first TLS handshake, and before profile partitions
+    // exist so their sessions are caught by the session-created listener.
+    certificateModule.installCertificateVerifyProc(config, app, session.defaultSession);
+
     await mainAppWindow.onAppReady(appConfig, customBackground, screenSharingService, profilesManager);
 
-    // Phase 1c.1: wire per-profile WebContentsView lifecycle once the main
-    // window exists. Bootstrap Profile 0 from the legacy partition so a
+    // Flatpak only: record the background permission with the desktop portal
+    // and set the Background Apps status line (issue #2815). No-op elsewhere.
+    backgroundPortal.init();
+
+    // Wire per-profile WebContentsView lifecycle once the main window
+    // exists. Bootstrap Profile 0 from the legacy partition so a
     // pre-existing Teams login survives the first flag flip (ADR-020).
     if (config.multiAccount?.enabled) {
       const mainWindow = mainAppWindow.getWindow();
@@ -618,7 +718,10 @@ async function handleAppReady() {
         profileViewManager = new ProfileViewManager(
           mainWindow,
           profilesManager,
-          config
+          config,
+          mainAppWindow.bindDisplayMediaHandler,
+          mainAppWindow.bindWindowOpenHandler,
+          mainAppWindow.injectScreenSharingLogic
         );
         profileViewManager.initialize();
         await profileViewManager.bootstrapProfileZeroIfNeeded();
@@ -629,11 +732,20 @@ async function handleAppReady() {
       }
     }
 
+    if (process.platform === "linux" && config.auth?.webauthn?.enabled) {
+      await WebAuthn.initialize(mainAppWindow.getWindow(), config);
+    }
+
     initializeGraphApiClient();
     registerGraphApiHandlers(ipcMain, graphApiClient);
     initializeQuickChat();
     registerGlobalShortcuts(config, mainAppWindow, app);
     initializeAutoUpdater();
+
+    // Attach the download manager after the partition is provisioned by the
+    // main window. Issue #2512: without this, file downloads from Teams are
+    // silent and the user gets no completion feedback.
+    downloadManager.initialize(session.fromPartition(config.partition));
 
     console.info('[IPC Security] Channel allowlisting enabled');
     console.info(`[IPC Security] ${allowedChannels.size} channels allowlisted`);
@@ -673,7 +785,6 @@ async function requestMediaAccess() {
 async function userStatusChangedHandler(_event, options) {
   userStatus = options.data.status;
 
-  // Publish status to MQTT if enabled
   if (mqttClient) {
     try {
       await mqttClient.publishStatus(userStatus);
@@ -686,6 +797,22 @@ async function userStatusChangedHandler(_event, options) {
 async function setBadgeCountHandler(_event, count) {
   if (!config.disableBadgeCount) {
     app.setBadgeCount(count);
+    // Electron's own Linux badge path loads libunity at runtime, which none
+    // of our packagings ship, so setBadgeCount is a silent no-op there.
+    // Mirror the count over the LauncherEntry broadcast the docks actually
+    // listen to — the same route downloads use for dock progress.
+    if (os.platform() === "linux") {
+      try {
+        require("./downloadManager/launcherEntryEmitter").update({
+          count,
+          countVisible: count > 0,
+        });
+      } catch (error) {
+        console.warn("[Badge] LauncherEntry emit failed", {
+          message: error.message,
+        });
+      }
+    }
   }
 }
 

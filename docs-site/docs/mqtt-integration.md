@@ -98,6 +98,7 @@ Add these options under the `mqtt` key in your `config.json`:
 | `statusTopic` | `string` | `"status"` | Topic name for status messages (outbound) |
 | `commandTopic` | `string` | `""` | Topic name for receiving commands (inbound). Leave empty or omit to disable command reception (status publishing only). Set to `"command"` to enable. |
 | `statusCheckInterval` | `number` | `10000` | Polling fallback interval in milliseconds |
+| `mediaTopics` | `object` | see [Media Topics](#media-topics) | Custom topic names for media state topics |
 
 ### Topic Structure
 
@@ -106,6 +107,30 @@ Add these options under the `mqtt` key in your `config.json`:
 
 **Command Reception (Inbound)**: `{topicPrefix}/{commandTopic}`
 - Example: `teams/command`
+
+### Media Topics
+
+The media state topic names (relative to `topicPrefix`) can be customized via `mqtt.mediaTopics`. The defaults are:
+
+```json
+{
+  "mqtt": {
+    "mediaTopics": {
+      "inCall": "in-call",
+      "incomingCall": "incoming-call",
+      "meetingStarted": "meeting-started",
+      "camera": "camera",
+      "microphone": "microphone",
+      "microphoneControl": "microphone/control",
+      "screenSharing": "screen-sharing"
+    }
+  }
+}
+```
+
+All keys are optional; omitted keys fall back to the defaults shown above. [Home Assistant discovery](#home-assistant-auto-discovery) configurations automatically use the customized topic names.
+
+> **Note:** `microphoneControl` tracks `microphone` by default — if you set `microphone` but omit `microphoneControl`, the control topic becomes `<microphone>/control` (e.g. `microphone: "mic"` → `mic/control`), so the two stay in sync. Set `microphoneControl` explicitly to decouple it.
 
 ### Broker URL Formats
 
@@ -168,8 +193,25 @@ Send commands as JSON messages to the command topic (`teams/command` by default)
 | Action | Teams Shortcut | Description |
 |--------|---------------|-------------|
 | `toggle-mute` | Ctrl+Shift+M | Toggle microphone mute/unmute |
+| `mute` | Ctrl+Shift+M | Mute the microphone (state-aware, see below) |
+| `unmute` | Ctrl+Shift+M | Unmute the microphone (state-aware, see below) |
 | `toggle-video` | Ctrl+Shift+O | Toggle video on/off |
 | `toggle-hand-raise` | Ctrl+Shift+K | Toggle hand raise in meeting |
+| `leave` | Ctrl+Shift+H | Leave/hang up the active call |
+
+### State-Aware Mute and Unmute
+
+Teams only exposes a mute *toggle* shortcut, so `mute` and `unmute` work by tracking the current microphone state (published on the `microphone/control` topic, see [Published Topics](#published-topics)) and only sending the toggle when the state would actually change:
+
+- `mute` is ignored if the microphone is already muted; `unmute` is ignored if already unmuted.
+- Until the first microphone event arrives (e.g. before you have joined a call since app start), the tracked state is `unknown` and both commands are ignored as a safety default. Add `"force": true` to send the toggle anyway:
+
+```json
+{
+  "action": "unmute",
+  "force": true
+}
+```
 
 ### Sending Commands
 
@@ -184,6 +226,9 @@ mosquitto_pub -h localhost -t "teams/command" -m '{"action":"toggle-video"}' -q 
 
 # Toggle hand raise
 mosquitto_pub -h localhost -t "teams/command" -m '{"action":"toggle-hand-raise"}' -q 1
+
+# Leave call
+mosquitto_pub -h localhost -t "teams/command" -m '{"action":"leave"}' -q 1
 ```
 
 #### System Keyboard Shortcuts
@@ -354,35 +399,150 @@ Use `jq` to format the JSON output for better readability. Install with `apt-get
 - Check Microsoft 365 permissions for your account
 - Verify Graph API scopes are granted (Calendars.Read)
 
-**Related Research:**
+**Related:**
 
-- [Graph API Integration](development/research/graph-api-integration-research.md)
+- [Graph API Integration](development/adr/030-graph-api-teams-session-token.md)
 
-## Home Automation Integration
+## Published Topics
 
-The MQTT integration has been tested with various home automation platforms. However, specific automation configurations vary based on your setup and requirements.
+When MQTT is enabled, Teams for Linux automatically publishes to the following retained topics:
 
-### Share Your Automations
+| Topic | Payload | Description |
+|-------|---------|-------------|
+| `{topicPrefix}/connected` | `"true"` or `"false"` | App connection state (uses MQTT Last Will and Testament) |
+| `{topicPrefix}/{statusTopic}` | JSON object | User presence status (see [Message Format](#message-format) above) |
+| `{topicPrefix}/in-call` | `"true"` or `"false"` | Active call state via IPC events and WebRTC fallback |
+| `{topicPrefix}/incoming-call` | `"true"` or `"false"` | Incoming call ringing state |
+| `{topicPrefix}/meeting-started` | `"true"` or `"false"` | Scheduled-meeting-start pulse (experimental, requires [`mqtt.meetingStartDetection.enabled`](#meeting-start-detection-experimental)) |
+| `{topicPrefix}/camera` | `"true"` or `"false"` | Camera on/off state |
+| `{topicPrefix}/microphone` | `"speaking"`, `"silent"`, `"muted"`, or `"off"` | Microphone state from WebRTC speaking-indicator monitoring |
+| `{topicPrefix}/microphone/control` | `"muted"`, `"unmuted"`, or `"off"` | Simplified mute state derived from the microphone state; drives the [`mute`/`unmute` command guard](#state-aware-mute-and-unmute) |
+| `{topicPrefix}/screen-sharing` | `"true"` or `"false"` | Screen sharing active state |
 
-If you've successfully integrated Teams for Linux with your home automation system, **please share your configurations** to help other users:
+The media topic names after the prefix (`in-call`, `incoming-call`, `meeting-started`, `camera`, `microphone`, `microphone/control`, `screen-sharing`) are defaults and can be customized via [`mqtt.mediaTopics`](#media-topics).
 
-- **[GitHub Issues](https://github.com/IsmaelMartinez/teams-for-linux/issues)** - Tag as enhancement and share your automation scripts
-- **[Matrix Space](https://matrix.to/#/#teams-for-linux-space:matrix.org)** - Discuss and share configurations with the community
-- **Supported Platforms**: Node-RED, n8n, openHAB, Domoticz, and other MQTT-enabled systems
-- **What to Share**:
-  - Flow exports for Node-RED/n8n
-  - Example use cases (busy lights, notification routing, etc.)
-  - Hardware integrations (ESP32, Raspberry Pi projects, etc.)
+All topics use retained messages so subscribers receive the last known state immediately on connect. The `connected` topic uses LWT: if the app crashes or loses network, the broker publishes `"false"` automatically.
 
-### Integration Ideas
+The microphone topic activates whenever `mqtt.enabled` is true (no separate toggle). States are derived from WebRTC `RTCPeerConnection.getStats()`: `speaking` means audio is being transmitted, `silent` means the mic is open but quiet, `muted` means Teams has zeroed the audio signal, and `off` means no active call.
 
-Common automation scenarios include:
-- **Status Lights**: Change LED colors based on availability (red=busy, green=available)
-- **Do Not Disturb Signs**: Physical "On Air" signs for home offices
-- **Smart Home Scenes**: Adjust lighting, mute speakers during calls
-- **Notification Routing**: Silence phone notifications when in meetings
-- **Calendar Integration**: Sync status with other calendar systems
-- **Dashboards**: Display team availability in Grafana, MQTT Explorer, or custom dashboards
+The camera topic monitors video sender `track.enabled` in the same RTCPeerConnection poll loop used for microphone detection, filtering out screen-sharing tracks via `displaySurface`.
+
+## Meeting Start Detection (Experimental)
+
+When a scheduled meeting starts, Teams shows a "Meeting Started" banner (and a toast when someone explicitly starts it). Teams for Linux detects this primarily through Teams' internal command stream, which carries the banner as structured, locale-independent data, with a DOM text-match fallback, and publishes a pulse to `{topicPrefix}/meeting-started`: `"true"` on detection, back to `"false"` on whichever comes first, joining the call or `resetSeconds` elapsing. This lets Home Assistant automations fire when a scheduled meeting actually becomes active, not just when it was scheduled (issue [#2587](https://github.com/IsmaelMartinez/teams-for-linux/issues/2587)).
+
+The feature is off by default. Enable it alongside MQTT:
+
+```json
+{
+  "mqtt": {
+    "enabled": true,
+    "brokerUrl": "mqtt://192.168.1.100:1883",
+    "meetingStartDetection": {
+      "enabled": true,
+      "patterns": ["meeting started", "started the meeting"],
+      "resetSeconds": 10
+    }
+  }
+}
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `meetingStartDetection.enabled` | `boolean` | `false` | Enable toast detection and the `meeting-started` topic |
+| `meetingStartDetection.patterns` | `string[]` | `["meeting started", "started the meeting"]` | Case-insensitive regular expressions for the DOM fallback path |
+| `meetingStartDetection.resetSeconds` | `number` | `10` | Seconds before the topic resets to `"false"` if you never join. Joining resets it immediately |
+
+**Known limitations:**
+
+- **Best-effort and fragile.** Detection relies on matching the toast text in the Teams UI. Microsoft can reword the toast or restructure the DOM at any time, which silently breaks detection until patterns are updated.
+- **English-only default.** The default pattern only matches the English toast. If your Teams UI runs in another language, set `patterns` to the wording your locale uses, for example `"hat die Besprechung gestartet"` for German. Patterns are compiled as case-insensitive regular expressions.
+- **No end signal.** Teams provides nothing when the meeting ends, so the topic is a momentary pulse rather than a persistent state.
+- **Privacy.** The toast text contains the name of the person who started the meeting. It is never logged and never published; only the detection event itself reaches MQTT.
+
+## Home Assistant Auto-Discovery
+
+When `mqtt.homeAssistant.enabled` is set to `true`, Teams for Linux publishes [MQTT Discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery) configurations so Home Assistant automatically creates entities for your Teams state. No manual YAML entity definitions needed.
+
+### Configuration
+
+```json
+{
+  "mqtt": {
+    "enabled": true,
+    "brokerUrl": "mqtt://192.168.1.100:1883",
+    "clientId": "teams-for-linux",
+    "topicPrefix": "teams",
+    "commandTopic": "command",
+    "homeAssistant": {
+      "enabled": true,
+      "discoveryPrefix": "homeassistant",
+      "deviceName": "Teams for Linux"
+    }
+  }
+}
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `mqtt.homeAssistant.enabled` | `boolean` | `false` | Publish HA discovery configs on connect |
+| `mqtt.homeAssistant.discoveryPrefix` | `string` | `"homeassistant"` | Discovery topic prefix (must match HA's `discovery_prefix` setting) |
+| `mqtt.homeAssistant.deviceName` | `string` | `"Teams for Linux"` | Device name shown in HA |
+
+### Entities Created
+
+All entities are grouped under a single HA device (identified by `mqtt.clientId`). Availability is tied to the `{topicPrefix}/connected` LWT topic.
+
+| HA Component | Entity | State Topic | Description |
+|-------------|--------|-------------|-------------|
+| `sensor` | Teams Status | `{topicPrefix}/{statusTopic}` | Presence status (available, busy, dnd, away, brb) |
+| `sensor` | Teams Microphone | `{topicPrefix}/microphone` | Microphone state (speaking, silent, muted, off) |
+| `binary_sensor` | Teams In Call | `{topicPrefix}/in-call` | Whether you are in an active call |
+| `binary_sensor` | Teams Incoming Call | `{topicPrefix}/incoming-call` | Whether a call is ringing |
+| `binary_sensor` | Teams Meeting Started | `{topicPrefix}/meeting-started` | Pulses on when a scheduled-meeting-start toast is detected (see [Meeting Start Detection](#meeting-start-detection-experimental)) |
+| `binary_sensor` | Teams Screen Sharing | `{topicPrefix}/screen-sharing` | Whether screen sharing is active |
+| `binary_sensor` | Teams Camera | `{topicPrefix}/camera` | Whether the camera is on |
+| `button` | Teams Toggle Mute | via `commandTopic` | Sends `{"action":"toggle-mute"}` |
+| `button` | Teams Toggle Video | via `commandTopic` | Sends `{"action":"toggle-video"}` |
+| `button` | Teams Toggle Hand Raise | via `commandTopic` | Sends `{"action":"toggle-hand-raise"}` |
+| `button` | Teams Leave Call | via `commandTopic` | Sends `{"action":"leave"}` |
+
+Button entities are only created when `commandTopic` is set (bidirectional mode). Discovery configs are republished on every broker reconnect so entities survive broker restarts.
+
+### Example Automation
+
+```yaml
+automation:
+  - alias: "Office busy light on call"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.teams_for_linux_in_call
+        to: "on"
+    action:
+      - action: light.turn_on
+        target:
+          entity_id: light.office_status
+        data:
+          color_name: red
+          brightness: 255
+
+  - alias: "Office light available when call ends"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.teams_for_linux_in_call
+        to: "off"
+    action:
+      - action: light.turn_on
+        target:
+          entity_id: light.office_status
+        data:
+          color_name: green
+          brightness: 128
+```
+
+## Other Home Automation Platforms
+
+The MQTT integration works with any MQTT-compatible platform. If you've integrated Teams for Linux with your home automation system, share your configurations on [GitHub Issues](https://github.com/IsmaelMartinez/teams-for-linux/issues) or the [Matrix Space](https://matrix.to/#/#teams-for-linux-space:matrix.org).
 
 ## Testing & Troubleshooting
 
@@ -616,6 +776,7 @@ Commands are validated with multiple security layers:
   - `toggle-mute` → Ctrl+Shift+M
   - `toggle-video` → Ctrl+Shift+O
   - `toggle-hand-raise` → Ctrl+Shift+K
+  - `leave` → Ctrl+Shift+H
 - Sends keyboard events to Teams window via `sendKeyboardEventToWindow`
 - **Location**: `app/globalShortcuts/index.js` for keyboard event generation
 
@@ -638,6 +799,43 @@ Commands are validated with multiple security layers:
 6. Keyboard event sent to Teams window
 7. Teams executes the action
 
+
+## Home Assistant Automation Examples
+
+### Flash Light on Incoming Call
+
+Use the `incoming-call` topic to trigger a visual alert when Teams rings. The second automation restores the light when the call ends or when the app disconnects (crash recovery via LWT).
+
+```yaml
+automation:
+  - alias: "Teams incoming call — orange LED"
+    trigger:
+      - platform: mqtt
+        topic: "teams/incoming-call"
+        payload: "true"
+    action:
+      service: light.turn_on
+      target:
+        entity_id: light.office
+      data:
+        rgb_color: [255, 140, 0]
+        flash: short
+
+  - alias: "Teams incoming call cleared — restore LED"
+    trigger:
+      - platform: mqtt
+        topic: "teams/incoming-call"
+        payload: "false"
+      - platform: mqtt
+        topic: "teams/connected"
+        payload: "false"
+    action:
+      service: light.turn_off
+      target:
+        entity_id: light.office
+```
+
+The `teams/connected=false` trigger handles the crash case: if the app exits unexpectedly, the MQTT LWT message fires and the automation resets the light rather than leaving it orange indefinitely.
 
 ## Related Documentation
 

@@ -14,6 +14,386 @@
   <url type="bugtracker">https://github.com/IsmaelMartinez/teams-for-linux/issues</url>
   <launchable type="desktop-id">com.github.IsmaelMartinez.teams_for_linux.desktop</launchable>
   <releases>
+    <release version="2.23.0" date="2026-09-26">
+      <description>
+        <ul>
+          <li>deeplink: put the caret in the compose box after an in-page route (#2991)</li>
+          <li>logging: name slow-link chunk failures and time the initial load (#3009)</li>
+          <li>menu: add Open config file and Open config folder to Settings (#2893)</li>
+          <li>mqtt: add leave command to hang up the active call (#3002)</li>
+          <li>deeplink: keep a running call through the fallback, on any Teams host (#2988)</li>
+          <li>notifications: show Teams for Linux as the notification title on Linux (#2898)</li>
+          <li>release: describe the automated Flathub beta bump (#2989)</li>
+          <li>clear the awaiting-feedback label on inline replies from fork PRs (#2993)</li>
+          <li>deps: bump image-size from 2.0.2 to 2.0.4 in /docs-site (#3006)</li>
+          <li>deps: bump mqtt in the minor-and-patch group (#2997)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.22.0" date="2026-09-18">
+      <description>
+        <ul>
+          <li>multi-account: attribute descendants + profile-view window-open policy (ADR-020 Phase 2) (#2916)</li>
+          <li>deeplink: take a document title change as in-page route consumption (#2985)</li>
+          <li>multi-account: inject the screen-sharing script into profile views (#2981)</li>
+          <li>publish unread count over LauncherEntry with packaging-aware desktop URI (badge) (#2970)</li>
+          <li>deps-dev: bump @playwright/test in the minor-and-patch group (#2977)</li>
+          <li>deps-dev: bump electron from 42.9.3 to 43.7.0 (#2975) (7657aa8), closes #2927</li>
+          <li>deps: bump the minor-and-patch group in /docs-site with 2 updates (#2978)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.21.0" date="2026-09-11">
+      <description>
+        <ul>
+          <li>config: add the ten remaining new nested namespaces and deprecate their flat names (#2897)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.20.1" date="2026-09-11">
+      <description>
+        <ul>
+          <li>flatpak: keep the background portal from deleting autostart entries (#2937)</li>
+          <li>network: don't show blank page on network drop, and dont reload on network resume (#2969)</li>
+          <li>deeplink: route deep links in page instead of reloading (#2950)</li>
+          <li>adr: ADR-029 configuration schema as single source of truth (#2956)</li>
+          <li>adr: ADR-030 Graph API access via the Teams session token (#2957)</li>
+          <li>adr: ADR-031 keep the ozone-platform x11 default on Wayland (#2958)</li>
+          <li>adr: fold the FIDO2 touch prompt research into ADR-021 (#2952)</li>
+          <li>adr: update statuses for ADR-012, 014, 019, 020, 021, 022 and refresh the index (#2955)</li>
+          <li>mqtt: retire the incoming-call plan now meeting-start detection has shipped (#2954)</li>
+          <li>research: retire the custom stickers external-sources research (#2953)</li>
+          <li>stale: exempt good first issue and help wanted issues from auto-close (#2960)</li>
+          <li>deps-dev: bump the minor-and-patch group with 2 updates (#2961)</li>
+          <li>deps: bump @swc/html from 1.15.43 to 1.16.2 in /docs-site (#2965)</li>
+          <li>deps: bump colord from 2.9.3 to 2.10.0 in /docs-site (#2966)</li>
+          <li>deps: bump joi from 17.13.4 to 17.13.7 in /docs-site (#2967)</li>
+          <li>deps: bump js-yaml from 4.3.1 to 4.3.2 in both lockfiles (#2972)</li>
+          <li>deps: bump svgo from 3.3.4 to 3.3.5 in /docs-site (#2968)</li>
+          <li>deps: update qs and fast-uri to clear six Dependabot alerts (#2951)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.20.0" date="2026-09-03">
+      <description>
+        <ul>
+          <li>ci: open the Flathub beta bump PR automatically after a pre-release (#2930) (b2029d5), closes #2880</li>
+          <li>build: macOS Build System &amp; architecture (#2900)</li>
+          <li>snap: stop the desktop launcher aborting before Electron starts (#2948)</li>
+          <li>webauthn: allow extra login origins via auth.webauthn.extraOrigins (#2945)</li>
+          <li>deps-dev: bump @humanfs/node from 0.16.7 to 0.16.8 (#2941)</li>
+          <li>deps-dev: bump @xmldom/xmldom from 0.8.13 to 0.8.15 (#2943)</li>
+          <li>deps: bump browserslist from 4.28.6 to 4.28.8 in /docs-site (#2940)</li>
+          <li>deps: bump fast-uri from 3.1.5 to 3.1.7 (#2942)</li>
+          <li>deps: bump github/codeql-action from 4.37.8 to 4.37.9 (#2932)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.19.0" date="2026-09-01">
+      <description>
+        <ul>
+          <li>config: add toNestedConfigFile to migrate flat keys to nested (#2914)</li>
+          <li>config: offer the migrated config from the Settings menu (#2915)</li>
+          <li>multi-account: sender→profile attribution map (ADR-020 Phase 2 foundation) (#2865)</li>
+          <li>auth: keep msal cookie persistence on when a partial auth block omits it (#2928)</li>
+          <li>notifications: relay notification clicks so Teams opens the sending chat (#2903)</li>
+          <li>webauthn: ask for a single security key touch (#2889) (7291364), closes #2922</li>
+          <li>webauthn: resolve discoverable sign-ins via credential management (#2917)</li>
+          <li>webauthn: survive the FIDO2 PIN landing on an exited child (#2921)</li>
+          <li>correct stale ADR status and upstream claims, add multi-account roadmap entry (#2923)</li>
+          <li>deps: bump google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml (#2909)</li>
+          <li>deps: bump the minor-and-patch group with 2 updates (#2925)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.18.1" date="2026-08-25">
+      <description>
+        <ul>
+          <li>snap: revert core22 -&amp;gt; core24 migration (#2758) (#2906)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.18.0" date="2026-08-24">
+      <description>
+        <ul>
+          <li>menus: add a menu option to choose a custom app icon (#2895)</li>
+          <li>webauthn: show a prompt while waiting for a security key touch (#2779)</li>
+          <li>packaging: recommend fido2-tools in deb and rpm packages (#2887)</li>
+          <li>webauthn: give reconstructed authenticator responses their real prototypes (#2890)</li>
+          <li>webauthn: return PublicKeyCredential-compatible responses (#2878)</li>
+          <li>adr: add ADR-028 to the docs sidebar (#2884) (cfe4ce9), closes #2609</li>
+          <li>labels: ignore maintainer replies and cover PRs in awaiting-feedback removal (#2896)</li>
+          <li>deps: bump the minor-and-patch group with 4 updates (#2901)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.17.1" date="2026-08-20">
+      <description>
+        <ul>
+          <li>add missing commands and CI gotchas to CLAUDE.md (#2882)</li>
+          <li>adr: add ADR 028 rejecting OTC pre-fill on third-party IdPs (#2881) (d639b42), closes #2869</li>
+          <li>snap: migrate base core22 -&amp;gt; core24 via the snapcraft config key (#2758)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.17.0" date="2026-08-19">
+      <description>
+        <ul>
+          <li>config: add shortcuts and storage namespaces, deprecate their flat names (#2859)</li>
+          <li>linux: background portal integration for Flatpak (#2815) (#2826)</li>
+          <li>ci: install elfutils for the flatpak smoke build (#2856)</li>
+          <li>mainAppWindow: clear every profile partition on startup (#2868)</li>
+          <li>menus: clear every profile partition on Quit (Clear Storage) (#2864)</li>
+          <li>menus: honour clearStorageData when quitting with clear storage (#2861)</li>
+          <li>network: treat ERR_TIMED_OUT as recoverable so the retry loop survives (#2876) (21a8ed2), closes #2875</li>
+          <li>screen-sharing: pass picker source directly to avoid Wayland ID mismatch (#2755)</li>
+          <li>bound timestamp polling, cache tray base icon, parallelise cache scans (#2837)</li>
+          <li>config: aggregate deprecation warnings into one message (#2858)</li>
+          <li>idle: document driving the idle state file on Wayland (#2873) (d57d352), closes #2851</li>
+          <li>update ADR-026 and roadmap for merged portal and perf work (#2857)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.16.0" date="2026-08-14">
+      <description>
+        <ul>
+          <li>multi-account: pin profiles + Ctrl+Alt+1…5 switch shortcuts (ADR-020 Phase 1c.2) (#2787)</li>
+          <li>auth: default keepMsalCacheEncryptionCookie to on (#2850)</li>
+          <li>deps: bump nanoid in docs-site lockfile to clear advisory #211 (#2827)</li>
+          <li>deps: refresh docs-site lockfile to clear http-proxy-middleware advisory (#2823)</li>
+          <li>logging: remove #2587 debug instrumentation that shipped in 2.15.0 (#2814)</li>
+          <li>logging: stop logging notification text and page DOM (#2819)</li>
+          <li>menus: limit hidden-menubar accelerators to profile switching (#2821) (#2824)</li>
+          <li>network: bound the connectivity sweep so a hung probe cannot stall startup (#2816)</li>
+          <li>notifications: load sender avatars for electron notifications (#2809)</li>
+          <li>webauthn: sign the iframe's own origin for relayed ceremonies (#2828) (#2829)</li>
+          <li>adr: ADR-025 config option naming convention (#2836)</li>
+          <li>adr: ADR-026 performance audit outcomes (#2838)</li>
+          <li>adr: leave the rename mechanism undecided in ADR-025 (#2843)</li>
+          <li>docs: bound the docs build with timeout-minutes (#2852)</li>
+          <li>flatpak: smoke build on release tags, document the beta remote (#2853)</li>
+          <li>add osv-scanner configuration (#2846)</li>
+          <li>deps-dev: bump the minor-and-patch group with 2 updates (#2820)</li>
+          <li>deps: bump brace-expansion from 5.0.8 to 5.0.9 in /docs-site (#2802)</li>
+          <li>deps: bump dompurify from 3.4.12 to 3.4.13 in /docs-site (#2805)</li>
+          <li>deps: bump fast-uri from 3.1.4 to 3.1.5 (#2800)</li>
+          <li>deps: bump fast-uri from 3.1.4 to 3.1.5 in /docs-site (#2804)</li>
+          <li>deps: bump js-yaml from 4.3.0 to 4.3.1 (#2808)</li>
+          <li>deps: bump js-yaml from 4.3.0 to 4.3.1 in /docs-site (#2807)</li>
+          <li>deps: bump mermaid from 11.15.0 to 11.16.1 in /docs-site (#2806)</li>
+          <li>deps: bump undici from 7.28.0 to 7.29.0 (#2799)</li>
+          <li>deps: bump undici from 7.28.0 to 7.29.0 in /docs-site (#2801)</li>
+          <li>deps: refresh brace-expansion in the lockfile (#2847)</li>
+          <li>sonar: clear docker and String.raw findings (#2818) (#2825)</li>
+          <li>sonar: clear the code-smell tail (#2813)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.15.0" date="2026-08-07">
+      <description>
+        <ul>
+          <li>auth: pre-fill Microsoft web sign-in credentials (#2761) (#2798)</li>
+          <li>mqtt: meeting-started detection first pass (#2587) (#2757)</li>
+          <li>webauthn: log timeout, phase timings and page aborts (#2785)</li>
+          <li>auth: Keep msal.cache.encryption cookie on restart (#2780)</li>
+          <li>certificate: apply customCACertsFingerprints to every TLS verification (#2778)</li>
+          <li>paste: restore File.path on pasted files so Teams uploads accept them (#2790)</li>
+          <li>resolve SonarCloud bug and vulnerability findings (#2766)</li>
+          <li>sonar: exclude declarative config schema from duplication checks (#2793)</li>
+          <li>ui: point dialog placeholders at teams.cloud.microsoft (#2797)</li>
+          <li>certificate: document NSS trust store for TLS-inspecting proxies (#2776)</li>
+          <li>research documentation cleanup (#2769)</li>
+          <li>deps: bump @easyops-cn/docusaurus-search-local (#2784)</li>
+          <li>deps: bump actions/checkout from 7.0.0 to 7.0.1 (#2773)</li>
+          <li>deps: bump actions/setup-node from 6.4.0 to 7.0.0 (#2772)</li>
+          <li>deps: bump actions/stale from 9 to 11 (#2771)</li>
+          <li>deps: bump github/codeql-action from 3 to 4.37.3 (#2774)</li>
+          <li>deps: bump ip-address from 10.2.0 to 10.4.0 (#2788)</li>
+          <li>deps: bump the minor-and-patch group in /docs-site with 2 updates (#2765)</li>
+          <li>deps: bump the minor-and-patch group with 3 updates (#2783)</li>
+          <li>deps: bump the minor-and-patch group with 6 updates (#2764)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.14.1" date="2026-07-27">
+      <description>
+        <ul>
+          <li>ci: bump electron-builder 26.15.3 -&amp;gt; 26.15.7 to fix DOA snap builds (#2756)</li>
+          <li>idle: stop hard-exiting on SIGINT/SIGTERM so shutdown flushes storage (#2743)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.14.0" date="2026-07-25">
+      <description>
+        <ul>
+          <li>clientCertificate: add Linux smartcard PIN dialog and secure prompt (#2659)</li>
+          <li>multi-account: bottom-left profile switcher pill (ADR-020 Phase 1c.2) (#2661)</li>
+          <li>frameless: update no-drag selectors for Teams top-bar restructure (#2704)</li>
+          <li>theme: revert followSystemTheme default to false (#2732)</li>
+          <li>add privacy and data protection statement (#2742) (189a26d), closes #2741</li>
+          <li>roadmap: record smartcard PIN dialog under awaiting user feedback (#2739)</li>
+          <li>release-please: flag draft releases in the created-release comment (#2700)</li>
+          <li>deps-dev: bump electron from 42.5.1 to 42.7.0 (#2740)</li>
+          <li>deps-dev: bump the minor-and-patch group with 2 updates (#2709)</li>
+          <li>deps-dev: bump typescript from 6.0.3 to 7.0.2 in /docs-site (#2727)</li>
+          <li>deps: bump body-parser from 1.20.5 to 1.20.6 in /docs-site (#2735)</li>
+          <li>deps: bump brace-expansion from 5.0.6 to 5.0.7 in /docs-site (#2733)</li>
+          <li>deps: bump fast-uri and svgo in root and docs-site lockfiles (#2748)</li>
+          <li>deps: bump js-yaml from 3.14.2 to 3.15.0 in /docs-site (#2725)</li>
+          <li>deps: bump shell-quote from 1.8.4 to 1.10.0 in /docs-site (#2736)</li>
+          <li>deps: bump the minor-and-patch group across 1 directory with 7 updates (#2726)</li>
+          <li>deps: bump the minor-and-patch group with 2 updates (#2716)</li>
+          <li>deps: bump the minor-and-patch group with 2 updates (#2723)</li>
+          <li>deps: bump webpack-dev-server from 5.2.5 to 5.2.6 in /docs-site (#2734)</li>
+          <li>deps: bump websocket-driver from 0.7.4 to 0.7.5 in /docs-site (#2729)</li>
+          <li>remove redundant code comments that restate the code (#2728)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.13.0" date="2026-06-25">
+      <description>
+        <ul>
+          <li>macos: Dock presence overlay and Apple Silicon performance switches (#2653)</li>
+          <li>media: add media.microphone.ignoreSystemMute to decouple Teams mute from OS mic mute (#2695)</li>
+          <li>notifications: add electron.clickAction config for window restore (#2660)</li>
+          <li>auth: forward pre-login-noise auth signals to reauth recovery (#2688)</li>
+          <li>ci: pin electron-builder to 26.8.1 to restore Windows exe build (#2697)</li>
+          <li>drag-drop: restore File.path on dropped files for Teams uploads (#2679)</li>
+          <li>snap: pin electron-builder to 26.14.0 to restore snap launch (#2686)</li>
+          <li>troubleshooting: add Ubuntu Unity system-tray workaround (#2680) (#2693)</li>
+          <li>snap: pin snapcraft to 8.x in release workflow (#2696)</li>
+          <li>deps-dev: bump electron in the minor-and-patch group (#2685)</li>
+          <li>deps-dev: bump the minor-and-patch group with 3 updates (#2690)</li>
+          <li>deps: bump actions/checkout from 4 to 7 (#2689)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.12.0" date="2026-06-19">
+      <description>
+        <ul>
+          <li>config: generate config docs + schema from a single source (#2597 Phase 1) (#2604)</li>
+          <li>docs: interactive config explorer (#2597 Phase 2) (#2606)</li>
+          <li>download: save options, policy-block notification, device-switch guard (#2652)</li>
+          <li>mqtt: add configurable media topic names and mute/unmute commands (#2608)</li>
+          <li>window: add minimizeOnClose option (#2623)</li>
+          <li>auth: don't divert main-frame navigations through about:blank handler (#2605) (0853c9d), closes #2591</li>
+          <li>auth: gate in-app reauth recovery behind reauthRecovery.enabled (#2633)</li>
+          <li>auth: gate worker UPR recovery behind reauthRecovery opt-in (#2629)</li>
+          <li>auth: intercept login popups to trigger in-app recovery (#2622)</li>
+          <li>ci: extract Electron binary with system unzip (e2e) (#2594)</li>
+          <li>ci: use honest release-please PR header (#2648)</li>
+          <li>deps: bump docs-site deps to patched versions (Dependabot) (#2674)</li>
+          <li>navigation: keep back/forward working after Teams top-bar restructure (#2672)</li>
+          <li>net: add timeout to connectivity probes to prevent hang after resume (#2635)</li>
+          <li>theme: stop setting followOsTheme to prevent GraphQL rejection (#2673)</li>
+          <li>tray: clear badge reliably by widening title observation and fixing update race (#2643)</li>
+          <li>multi-account: scope custom-background URL per instance; close out Phase 1 audit docs (#2626)</li>
+          <li>remove explicit ozone-platform default (#2506)</li>
+          <li>config: config-file validation, generated docs and explorer for #2597 phases 3a/4 (#2642)</li>
+          <li>config: phase 0 of config/docs UX initiative (#2597) (#2602)</li>
+          <li>config: record #2597 phase 3b plan, migration as optional companion (#2657)</li>
+          <li>install: document the beta apt/rpm channel for pre-releases (#2638) (d53d0f3), closes #2637</li>
+          <li>move repository install instructions to the dedicated webpage (#2619)</li>
+          <li>research: documentation, contributing, and config UX (#2598)</li>
+          <li>research: FIDO2 touch-prompt feasibility note (#2631) (#2634)</li>
+          <li>research: smartcard/NSS PIN dialog feasibility for client-cert auth (#2641) (0cbd31a), closes #2639</li>
+          <li>roadmap: note in-review download, macOS, and device-switch work (#2655)</li>
+          <li>troubleshooting: document Google sign-in user-agent workaround (#2670)</li>
+          <li>snap: pin arm64 snapcraft below 9.0.0 to fix the snap build (#2649)</li>
+          <li>deps-dev: bump electron from 41.7.1 to 42.3.0 (#2589)</li>
+          <li>deps-dev: bump the minor-and-patch group with 2 updates (#2612)</li>
+          <li>deps-dev: bump the minor-and-patch group with 4 updates (#2658)</li>
+          <li>deps: bump actions/setup-node from 6.3.0 to 6.4.0 (#2614)</li>
+          <li>deps: bump actions/upload-artifact from 7.0.0 to 7.0.1 (#2613)</li>
+          <li>deps: bump canonical/setup-lxd action pin (#2615)</li>
+          <li>deps: bump dompurify from 3.4.0 to 3.4.11 in /docs-site (#2664)</li>
+          <li>deps: bump js-yaml from 4.1.1 to 4.2.0 (#2665)</li>
+          <li>deps: bump launch-editor from 2.13.0 to 2.14.1 in /docs-site (#2668)</li>
+          <li>deps: bump shell-quote from 1.8.3 to 1.8.4 in /docs-site (#2644)</li>
+          <li>deps: bump the minor-and-patch group in /docs-site with 3 updates (#2616)</li>
+          <li>deps: bump the minor-and-patch group with 4 updates (#2630)</li>
+          <li>deps: bump webpack-dev-server from 5.2.4 to 5.2.5 in /docs-site (#2669)</li>
+          <li>deps: bump ws from 7.5.10 to 7.5.11 in /docs-site (#2667)</li>
+          <li>deps: bump ws from 8.20.1 to 8.21.0 (#2666)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.11.1" date="2026-05-29">
+      <description>
+        <ul>
+          <li>bump checkout to Node 24 and make e2e non-blocking for packaging (#2595)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.11.0" date="2026-05-27">
+      <description>
+        <ul>
+          <li>#2476: custom stickers MVP (#2550)</li>
+          <li>config: default followSystemTheme to true (#2566)</li>
+          <li>mqtt: emit camera-state-changed from renderer for MQTT publishing (#2582)</li>
+          <li>mqtt: publish incoming-call topic for ring/invite events (#2572)</li>
+          <li>mqtt: publish microphone state to {topicPrefix}/microphone (#2497)</li>
+          <li>#2383: also setDesktopName so --class reaches X11 + Wayland (#2569)</li>
+          <li>#2534: route getDisplayMedia through in-app picker on Wayland (f38f28e), closes #2534</li>
+          <li>deps: bump qs and ws in docs-site to resolve security alerts (#2573)</li>
+          <li>logging: down-level pre-login auth-noise from renderer (#2564) (8de3b2d), closes #2560</li>
+          <li>logging: run renderer log fields through full PII sanitizer (#2562) (bff6d22), closes #2560</li>
+          <li>macos: use 256x256 source for the dock icon (#2563) (8f96c66), closes #2560</li>
+          <li>preload: serialize object-shaped unhandled rejections (#2561) (6720768), closes #2560</li>
+          <li>config: remove six deprecated config keys (#2567)</li>
+          <li>add vylen linux install/remove instruction (#2559)</li>
+          <li>documentation cleanup and HA discovery docs (#2575)</li>
+          <li>update camera topic and MQTT status to shipped (#2585)</li>
+          <li>deps-dev: bump electron from 41.6.1 to 41.7.1 (#2583)</li>
+          <li>deps-dev: bump qs from 6.14.2 to 6.15.2 (#2568)</li>
+          <li>deps-dev: bump tmp from 0.2.5 to 0.2.6 (#2584)</li>
+          <li>deps: bump @homebridge/dbus-native in the minor-and-patch group (#2574)</li>
+          <li>remove shipped mqtt-microphone-state-research doc (#2581)</li>
+          <li>remove simili-bot trial files (#2586)</li>
+          <li>update CLAUDE.md for ready → release ready label rename (#2576)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.10.0" date="2026-05-19">
+      <description>
+        <ul>
+          <li>downloads: drive taskbar progress bar during downloads (#2512) (#2514)</li>
+          <li>downloads: notify on download completion (#2512) (#2513)</li>
+          <li>multi-account: Manage-profiles dialog with rename + remove (#2510)</li>
+          <li>notifications: add notifications.timeoutType opt-in (#2521)</li>
+          <li>screenSharing: full-window picker overlay with detail panel (#2524) (#2543)</li>
+          <li>triage-bot: seed .github/hats.md taxonomy (#2548)</li>
+          <li>webauthn: FIDO2 hardware security key support for Linux (#802) (#2357)</li>
+          <li>auth: cover MCAS proxy suffix in cookie-domain matching (#2488)</li>
+          <li>customCSS: swallow expected executeJavaScript rejections (#2540)</li>
+          <li>deps: bump transitive mermaid to 11.15.0 (4 medium CVEs) (#2525)</li>
+          <li>downloads: disable QUIC to fix concurrent SharePoint downloads (#2518) (#2520)</li>
+          <li>multi-account: rebind screen-share handler per profile session (#2533) (f980dfc), closes #2529</li>
+          <li>prevent double notification sound and handle dismiss event (#2411) (#2414)</li>
+          <li>restore --ozone-platform=x11 default in package.json (#2511)</li>
+          <li>dialogs: use shared createDialogWindow in JoinMeetingDialog (#2507)</li>
+          <li>claude: add homepage convention (#2519)</li>
+          <li>notifications,wayland: GNOME workaround for #2411, restore ozone x11 default (#2547)</li>
+          <li>roadmap: capture 2026-05-07 ozone-platform default reset session (#2509)</li>
+          <li>roadmap: trim to themes, principles, and parked work (#2539)</li>
+          <li>gate packaging jobs on e2e_tests (#2545)</li>
+          <li>preload: guard modulesRequiringIpc against regression (#1902) (#2546)</li>
+          <li>deps-dev: bump @playwright/test in the minor-and-patch group (#2526)</li>
+          <li>deps: bump @babel/plugin-transform-modules-systemjs in /docs-site (#2517)</li>
+          <li>deps: bump brace-expansion from 5.0.5 to 5.0.6 in /docs-site (#2553)</li>
+          <li>deps: bump electron from 41.5.0 to 41.6.1 (#2549)</li>
+          <li>deps: bump fast-uri from 3.1.0 to 3.1.2 (#2515)</li>
+          <li>deps: bump fast-uri from 3.1.0 to 3.1.2 in /docs-site (#2516)</li>
+          <li>deps: bump ip-address from 10.1.0 to 10.2.0 (#2504)</li>
+          <li>deps: bump the minor-and-patch group in /docs-site with 2 updates (#2528)</li>
+          <li>deps: bump the minor-and-patch group with 2 updates (#2555)</li>
+          <li>deps: bump webpack-dev-server from 5.2.3 to 5.2.4 in /docs-site (#2554)</li>
+          <li>deps: bump ws from 8.19.0 to 8.20.1 (#2557)</li>
+          <li>github: add pull request template (#2544)</li>
+          <li>logging: demote noisy warns and block MS telemetry beacons (#2532)</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.9.0" date="2026-05-06">
       <description>
         <ul>

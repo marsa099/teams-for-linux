@@ -15,6 +15,16 @@ updates:
           - "minor"
           - "patch"
     open-pull-requests-limit: 10
+    ignore:
+      # electron-builder is frozen at the known-good 26.15.7 (#2756) — the
+      # first v26 release that fixes the snap-template extraction bug behind
+      # DOA snaps (#2684, electron-userland/electron-builder#10004) while
+      # still building the exe on windows-2025. Ignore ALL updates —
+      # including patches, which would otherwise auto-merge unreviewed via
+      # dependabot-auto-merge.yml — a Dependabot unpin is how 2.14.0's snap
+      # shipped broken. The core24 migration that would relax this (#2590,
+      # #2758) was reverted in #2905 (snaps core-dump on launch).
+      - dependency-name: "electron-builder"
 
   # npm dependencies for docs site
   - package-ecosystem: "npm"

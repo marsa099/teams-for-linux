@@ -27,6 +27,7 @@ const CATEGORIES = {
   'app/partitions/': 'Partitions & Zoom',
   'app/menus/': 'Menus & Tray',
   'app/customBackground/': 'Custom Background',
+  'app/customStickers/': 'Custom Stickers',
   'app/mainAppWindow/': 'Main Window',
   'app/login/': 'Authentication',
   'app/connectionManager/': 'Connection Management',
@@ -218,7 +219,7 @@ function main() {
     return acc;
   }, {});
 
-  Object.entries(summary).sort().forEach(([category, count]) => {
+  Object.entries(summary).sort(([a], [b]) => a.localeCompare(b)).forEach(([category, count]) => {
     console.log(`  ${category}: ${count} channels`);
   });
 }

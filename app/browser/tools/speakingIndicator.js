@@ -23,17 +23,28 @@
  * Overlay states:
  * - Green (pulsing): speaking — audio is being transmitted
  * - Grey: silent — mic is open but quiet
- * - Red: muted — Teams has zeroed the audio signal
+ * - Red: muted — the local audio sender's track is disabled
  *
- * Teams zeroes media-source.audioLevel to exactly 0.0 when muted,
- * making three-state detection (speaking/silent/muted) reliable.
+ * Muted is detected via `RTCRtpSender.track.enabled`: Teams sets the local
+ * audio track to `enabled = false` when the user clicks mute, which is
+ * authoritative and unambiguous. audioLevel alone is not — on quiet mics
+ * the unmuted level can read zero and look indistinguishable from a real
+ * mute (issue #2465).
+ *
+ * When ipcRenderer is provided (always true today since the module is in
+ * modulesRequiringIpc), the same state transitions are forwarded to the main
+ * process via the `microphone-state-changed` IPC channel for MQTT publishing.
+ * Values: 'speaking' | 'silent' | 'muted' | 'off' (off when the call ends).
+ *
+ * Camera state is also tracked: the poll loop checks video sender
+ * track.enabled and forwards changes via `camera-state-changed` (boolean).
+ * The main process mediaStatusService publishes this to {topicPrefix}/camera.
  */
 const activityHub = require('./activityHub');
 
 const LOG_PREFIX = '[SPEAKING_INDICATOR]';
 const POLL_INTERVAL_MS = 150;
 const SPEAKING_THRESHOLD = 0.01;  // audioLevel above this → speaking
-const MUTED_LEVEL = 0.0001;       // audioLevel below this → muted (Teams zeroes signal exactly)
 const OVERLAY_ID = 'speaking-indicator-overlay';
 const STYLES_ID = 'speaking-indicator-styles';
 
@@ -44,10 +55,13 @@ class SpeakingIndicator {
 	#polling = false;
 	#overlayVisible = false;
 	#overlayEnabled = false;
-	#hasSeenAudio = false; // true once audioLevel >= MUTED_LEVEL — prevents pre-join zeros reading as muted
 	#inCall = false;
+	#ipcRenderer = null;
+	#lastEmittedState = null; // 'speaking' | 'silent' | 'muted' | 'off' | null
+	#cameraEnabled = false;
+	#lastEmittedCameraState = null; // true | false | null
 
-	init(config) {
+	init(config, ipcRenderer) {
 		const overlayEnabled = config.media?.microphone?.speakingIndicator === true;
 		const mqttEnabled = config.mqtt?.enabled === true;
 
@@ -56,6 +70,7 @@ class SpeakingIndicator {
 		}
 
 		this.#overlayEnabled = overlayEnabled;
+		this.#ipcRenderer = ipcRenderer || null;
 
 		try {
 			this.#patchRTCPeerConnection();
@@ -106,10 +121,35 @@ class SpeakingIndicator {
 			console.info(`${LOG_PREFIX} call-disconnected event received, clearing connections`);
 			this.#inCall = false;
 			this.#peerConnections = [];
-			this.#hasSeenAudio = false;
 			this.#stopPolling();
 			this.#hideOverlay();
+			this.#emitMicrophoneState('off');
+			this.#emitCameraState(false);
 		});
+	}
+
+	// Notifies main process of microphone state for MQTT publishing.
+	#emitMicrophoneState(state) {
+		if (!this.#ipcRenderer) {
+			return;
+		}
+		if (this.#lastEmittedState === state) {
+			return;
+		}
+		this.#lastEmittedState = state;
+		this.#ipcRenderer.send('microphone-state-changed', state);
+	}
+
+	// Notifies main process of camera state for MQTT publishing.
+	#emitCameraState(enabled) {
+		if (!this.#ipcRenderer) {
+			return;
+		}
+		if (this.#lastEmittedCameraState === enabled) {
+			return;
+		}
+		this.#lastEmittedCameraState = enabled;
+		this.#ipcRenderer.send('camera-state-changed', enabled);
 	}
 
 	#startPolling() {
@@ -133,22 +173,13 @@ class SpeakingIndicator {
 		}
 		this.#polling = true;
 
-		// Remove closed connections
 		this.#peerConnections = this.#peerConnections.filter(
 			pc => pc.connectionState !== 'closed'
 		);
 
 		if (this.#peerConnections.length === 0) {
 			this.#polling = false;
-			console.info(`${LOG_PREFIX} No active connections, stopping polling`);
-			this.#stopPolling();
-			this.#hideOverlay();
-			// WebRTC-based call-disconnected: all connections closed (#2358)
-			if (this.#inCall) {
-				this.#inCall = false;
-				console.info(`${LOG_PREFIX} All connections closed, emitting call-disconnected (WebRTC)`);
-				activityHub.emit('call-disconnected');
-			}
+			this.#handleAllConnectionsClosed();
 			return;
 		}
 
@@ -164,37 +195,8 @@ class SpeakingIndicator {
 				}
 
 				report.forEach(stat => {
-					if (stat.type !== 'media-source' || stat.kind !== 'audio') {
-						return;
-					}
-					const level = stat.audioLevel;
-					if (typeof level !== 'number') {
-						return;
-					}
-
-					foundAudioStats = true;
-
-					if (level >= MUTED_LEVEL) {
-						this.#hasSeenAudio = true;
-					}
-
-					// Only interpret zero as muted once we've seen non-zero audio.
-					// Before that, zero means the connection is still setting up (pre-join).
-					let newState;
-					if (level >= SPEAKING_THRESHOLD) {
-						newState = 'speaking';
-					} else if (level < MUTED_LEVEL && this.#hasSeenAudio) {
-						newState = 'muted';
-					} else {
-						newState = 'silent';
-					}
-
-					if (newState !== this.#state) {
-						console.info(`${LOG_PREFIX} State: ${this.#state} → ${newState} (audioLevel=${level.toFixed(5)})`);
-						this.#state = newState;
-						if (this.#overlayVisible) {
-							this.#updateOverlay();
-						}
+					if (this.#applyAudioStat(pc, stat)) {
+						foundAudioStats = true;
 					}
 				});
 
@@ -205,6 +207,8 @@ class SpeakingIndicator {
 		} finally {
 			this.#polling = false;
 		}
+
+		this.#updateCameraState();
 
 		// WebRTC-based call-connected: audio stats detected with an established
 		// connection. The connectionState check prevents premature emission during
@@ -223,6 +227,89 @@ class SpeakingIndicator {
 			console.info(`${LOG_PREFIX} No audio stats found, hiding overlay`);
 			this.#hideOverlay();
 		}
+	}
+
+	#handleAllConnectionsClosed() {
+		console.info(`${LOG_PREFIX} No active connections, stopping polling`);
+		this.#stopPolling();
+		this.#hideOverlay();
+		this.#emitMicrophoneState('off');
+		this.#emitCameraState(false);
+		// WebRTC-based call-disconnected: all connections closed (#2358)
+		if (this.#inCall) {
+			this.#inCall = false;
+			console.info(`${LOG_PREFIX} All connections closed, emitting call-disconnected (WebRTC)`);
+			activityHub.emit('call-disconnected');
+		}
+	}
+
+	// Returns true when the stat carried a usable audio level.
+	#applyAudioStat(pc, stat) {
+		if (stat.type !== 'media-source' || stat.kind !== 'audio') {
+			return false;
+		}
+		const level = stat.audioLevel;
+		if (typeof level !== 'number') {
+			return false;
+		}
+
+		const newState = this.#micStateFor(pc, level);
+
+		if (newState !== this.#state) {
+			console.info(`${LOG_PREFIX} State: ${this.#state} → ${newState} (audioLevel=${level.toFixed(5)})`);
+			this.#state = newState;
+			if (this.#overlayVisible) {
+				this.#updateOverlay();
+			}
+		}
+		this.#emitMicrophoneState(newState);
+		return true;
+	}
+
+	// Authoritative mute signal: Teams sets the local audio sender's track to
+	// enabled = false when the user clicks mute. audioLevel alone is unreliable
+	// on quiet mics where the unmuted level can read zero (issue #2465).
+	#micStateFor(pc, level) {
+		let trackEnabled = true;
+		try {
+			const audioSender = pc.getSenders().find(s => s.track?.kind === 'audio');
+			if (audioSender?.track) {
+				trackEnabled = audioSender.track.enabled;
+			}
+		} catch {
+			// Fall through with trackEnabled = true.
+		}
+
+		if (!trackEnabled) return 'muted';
+		if (level >= SPEAKING_THRESHOLD) return 'speaking';
+		return 'silent';
+	}
+
+	// Camera state: check video sender track.enabled across all connections.
+	// Filter out screen-sharing tracks (which have a displaySurface setting)
+	// so only actual camera tracks are considered.
+	#updateCameraState() {
+		let cameraOn = false;
+		for (const pc of this.#peerConnections) {
+			try {
+				const videoSender = pc.getSenders().find(s => {
+					if (s.track?.kind !== 'video') return false;
+					const settings = s.track.getSettings?.() || {};
+					return !settings.displaySurface;
+				});
+				if (videoSender?.track?.enabled) {
+					cameraOn = true;
+					break;
+				}
+			} catch {
+				// Ignore errors from closed connections.
+			}
+		}
+		if (cameraOn !== this.#cameraEnabled) {
+			this.#cameraEnabled = cameraOn;
+			console.info(`${LOG_PREFIX} Camera: ${cameraOn ? 'on' : 'off'}`);
+		}
+		this.#emitCameraState(this.#cameraEnabled);
 	}
 
 	#showOverlay() {

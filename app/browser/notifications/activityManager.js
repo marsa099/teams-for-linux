@@ -16,15 +16,14 @@ class ActivityManager {
   }
 
   watchSystemIdleState() {
-    const self = this;
-    self.ipcRenderer.invoke("get-system-idle-state").then((state) => {
+    this.ipcRenderer.invoke("get-system-idle-state").then((state) => {
       let timeOut;
       if (this.config.awayOnSystemIdle) {
         timeOut = this.setStatusAwayWhenScreenLocked(state);
       } else {
         timeOut = this.keepStatusAvailableWhenScreenLocked(state);
       }
-      setTimeout(() => self.watchSystemIdleState(), timeOut);
+      setTimeout(() => this.watchSystemIdleState(), timeOut);
     });
   }
 
@@ -58,14 +57,13 @@ function setEventHandlers(self) {
   self.ipcRenderer.on("disable-wakelock", () => wakeLock.disable());
 
   self.ipcRenderer.on('incoming-call-action', (event, action) => {
-    console.debug("ActionHTML", document.body.innerHTML);
     const actionWrapper = document.querySelector('[data-testid="calling-actions"],[data-testid="msn-actions"]');
     if (actionWrapper) {
       const buttons = actionWrapper.querySelectorAll("button");
       if (buttons.length > 0) {
         switch (action) {
           case 'ACCEPT_AUDIO':
-            if (buttons.length == 3) {
+            if (buttons.length === 3) {
               buttons[1].click();
             }
             break;

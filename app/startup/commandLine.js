@@ -25,8 +25,29 @@ class CommandLineManager {
   }
 
   static addSwitchesAfterConfigLoad(config) {
+    if (process.platform === "darwin") {
+      this.#configureMacPerformance(config);
+    }
+
     if (process.env.XDG_SESSION_TYPE === "wayland") {
       this.#configureWayland(config);
+    }
+
+    // Issue #2518: starting a second SharePoint download while a first is in
+    // flight kills the first stream with `ERR_QUIC_PROTOCOL_ERROR` (-356) on
+    // the shared QUIC session. The freeze is reproducible end-to-end via a
+    // chrome://net-export trace; the failing event is on the QUIC transport,
+    // not at the application layer (no Chromium download permission gate is
+    // hit, no HTTP-2-style stream prioritisation issue — independent harness
+    // testing with two parallel 100 MB downloads from `proof.ovh.net` over
+    // HTTP/2 ran in parallel just fine, so the bug is QUIC-only). Forcing
+    // HTTPS over TCP/HTTP-2 by disabling QUIC for the whole session is the
+    // smallest reliable workaround we control from the app layer; the cost
+    // is slightly higher latency on Microsoft endpoints (no UDP fast-open,
+    // no 0-RTT) which is acceptable for a chat client. Defaults to true;
+    // set `network.disableQuic` to false in config to opt back into QUIC.
+    if (config.network?.disableQuic) {
+      app.commandLine.appendSwitch("disable-quic");
     }
 
     // Proxy configuration
@@ -34,10 +55,17 @@ class CommandLineManager {
       app.commandLine.appendSwitch("proxy-server", config.proxyServer);
     }
 
-    // Custom WM_CLASS for Linux window managers
+    // Custom WM_CLASS for Linux window managers.
+    // Electron 41.6.1 (backport of electron/electron#51424) changed the X11
+    // WM_CLASS path to read from the XDG App ID rather than app.getName(),
+    // and the Wayland app_id path has always read from the XDG App ID. The
+    // XDG App ID is set via app.setDesktopName(), so calling setName() alone
+    // no longer reaches either compositor. Set both so --class propagates to
+    // X11 WM_CLASS and Wayland wayland_app_id consistently (#2383).
     if (config.class) {
       console.info("Setting WM_CLASS property to custom value " + config.class);
       app.setName(config.class);
+      app.setDesktopName(`${config.class}.desktop`);
     }
 
     // Authentication server whitelist for SSO
@@ -56,6 +84,74 @@ class CommandLineManager {
     }
 
     this.addElectronCLIFlags(config);
+  }
+
+  // macOS performance optimizations for Apple Silicon and Intel Macs.
+  static #configureMacPerformance(config) {
+    // Opt-out switch (defaults on). These force a lot of GPU/rendering state
+    // on every Mac, so allow disabling them without also turning off the GPU.
+    if (config.media?.macPerformanceMode === false) {
+      console.info("[macOS] Performance optimizations disabled (media.macPerformanceMode is false)");
+      return;
+    }
+    if (config.disableGpu) {
+      return;
+    }
+    console.info("[macOS] Enabling native hardware and rendering optimizations");
+
+    // Force Metal for ANGLE rendering layer (super fast on Apple Silicon)
+    app.commandLine.appendSwitch("use-angle", "metal");
+
+    // Enable GPU/OOP rasterization and zero-copy transfers
+    app.commandLine.appendSwitch("enable-gpu-rasterization");
+    app.commandLine.appendSwitch("enable-oop-rasterization");
+    app.commandLine.appendSwitch("enable-zero-copy");
+    app.commandLine.appendSwitch("enable-native-gpu-memory-buffers");
+    app.commandLine.appendSwitch("enable-gpu-memory-buffer-video-frames");
+
+    // Enable hardware-accelerated WebRTC encoding/decoding for video calls
+    app.commandLine.appendSwitch("enable-webrtc-hw-decoding");
+    app.commandLine.appendSwitch("enable-webrtc-hw-encoding");
+
+    // Optimize rasterization threads for multi-core processors
+    app.commandLine.appendSwitch("num-raster-threads", "4");
+
+    // Optimize V8 for multi-core performance. Merge rather than overwrite so a
+    // `js-flags` already set via electronCLIFlags / the command line survives
+    // (same as enable-features).
+    const performanceJsFlags = [
+      "--concurrent-recompilation",
+      "--concurrent-marking",
+      "--concurrent-sweeping",
+    ];
+    // The larger V8 heap suits Apple Silicon's unified memory; gate it to
+    // arm64 so a 4 GB old-space ceiling isn't forced on older, lower-RAM Intel
+    // Macs where it can be counter-productive.
+    if (process.arch === "arm64") {
+      performanceJsFlags.unshift("--max-semi-space-size=16", "--max-old-space-size=4096");
+    }
+    if (app.commandLine.hasSwitch("js-flags")) {
+      const existing = app.commandLine.getSwitchValue("js-flags").split(" ").filter(Boolean);
+      const merged = Array.from(new Set([...existing, ...performanceJsFlags])).join(" ");
+      app.commandLine.appendSwitch("js-flags", merged);
+    } else {
+      app.commandLine.appendSwitch("js-flags", performanceJsFlags.join(" "));
+    }
+
+    const performanceFeatures = [
+      "CanvasOopRasterization",
+      "ParallelDownloading",
+      "Metal",
+      "CoreAnimationLayersSharedImages",
+    ];
+
+    if (app.commandLine.hasSwitch("enable-features")) {
+      const existing = app.commandLine.getSwitchValue("enable-features").split(",");
+      const merged = Array.from(new Set([...existing, ...performanceFeatures])).join(",");
+      app.commandLine.appendSwitch("enable-features", merged);
+    } else {
+      app.commandLine.appendSwitch("enable-features", performanceFeatures.join(","));
+    }
   }
 
   // Wayland display server configuration.

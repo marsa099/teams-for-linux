@@ -25,8 +25,12 @@ const allowedChannels = new Set([
   'desktop-capturer-get-sources',
   'get-screen-share-screen',
   'get-screen-share-stream',
+  'get-screen-sharing-displays',
   'get-screen-sharing-status',
   'resize-preview-window',
+  // main → renderer only (webContents.postMessage); not gated by this validator,
+  // listed here so the allowlist stays authoritative per CLAUDE.md.
+  'screen-share-port',
   'screen-sharing-started',
   'screen-sharing-stopped',
   'select-source',
@@ -37,12 +41,19 @@ const allowedChannels = new Set([
   // Notifications and user interaction
   'play-notification-sound',
   'show-notification',
+  // main -> renderer only (webContents.send to the renderer that created the
+  // notification). Not gated by this validator, which wraps ipcMain
+  // handle/on/once only; listed so the allowlist stays authoritative. No
+  // ipcMain handler exists for either, so these entries grant a renderer nothing.
+  'notification-closed',
+  'notification-clicked',
   'notification-show-toast',
   'notification-toast-click',
   'user-status-changed',
   'set-badge-count',
   'tray-update',
-  
+  'dock-icon-update',
+
   // Call management (sorted alphabetically)
   'call-connected',
   'call-disconnected',
@@ -54,6 +65,9 @@ const allowedChannels = new Set([
   // Media status (camera/microphone)
   'camera-state-changed',
   'microphone-state-changed',
+
+  // Scheduled-meeting-start toast detection for MQTT (#2587)
+  'meeting-started',
   
   // Authentication and forms
   'submitForm',
@@ -64,6 +78,11 @@ const allowedChannels = new Set([
   
   // Custom backgrounds
   'get-custom-bg-list',
+
+  // Custom stickers
+  'get-sticker-list',
+  'import-sticker-url',
+  'delete-sticker',
   
   // Connection management
   'offline-retry',
@@ -110,7 +129,44 @@ const allowedChannels = new Set([
   // `join-meeting-*`; submit forwards the form record to
   // `ProfilesManager.add()`, cancel destroys the dialog.
   'add-profile-submit',
-  'add-profile-cancel'
+  'add-profile-cancel',
+
+  // WebAuthn / FIDO2 security key support
+  'webauthn:create',
+  'webauthn:get',
+  'webauthn:pin-submit',
+  'webauthn:pin-cancel',
+  'webauthn:touch-cancel',
+
+  // Shared secure-prompt dialog (smartcard / PKCS#11 client-certificate PIN)
+  'secure-prompt:submit',
+  'secure-prompt:cancel',
+
+  // Manage-profiles dialog (Phase 1c.2). Inline rename forwards to
+  // `ProfilesManager.update()`; remove triggers a native confirmation
+  // before calling `ProfilesManager.remove()`. Close dismisses the
+  // dialog. State pushes flow main → renderer over `manage-profile-state`
+  // (no allowlist needed for that direction).
+  'manage-profile-rename',
+  // Pin/unpin toggle (Phase 1c.2 shortcuts). Forwards to
+  // `ProfilesManager.update(id, { pinned })`; main enforces the max-5 cap
+  // (the Ctrl+Alt+1…5 shortcut slots) and rejects past it.
+  'manage-profile-pin',
+  'manage-profile-remove',
+  'manage-profile-close',
+
+  // Bottom-left switcher pill (Phase 1c.2). The pill reuses the
+  // `profile-list` / `profile-get-active` / `profile-switch` channels above
+  // for its data; these are the pill-specific additions. open-add/open-manage
+  // open the existing dialogs (handled in `Menus`); set-expanded grows the view
+  // to full-window while the dropdown is open (handled in `ProfileViewManager`).
+  // State flows main → renderer over `profile-switcher-state` (send direction,
+  // not gated; listed for an authoritative allowlist per CLAUDE.md). All are
+  // registered only when `multiAccount.enabled === true`.
+  'profile-switcher-open-add',
+  'profile-switcher-open-manage',
+  'profile-switcher-set-expanded',
+  'profile-switcher-state'
 ]);
 
 const DANGEROUS_PROPS = new Set(['__proto__', 'constructor', 'prototype']);

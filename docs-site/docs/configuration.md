@@ -2,6 +2,10 @@
 
 This document details all available configuration options for the Teams for Linux application. These options can be set via command-line arguments or in a `config.json` file located in the application's configuration directory.
 
+:::note
+For a complete, always-up-to-date list of every option generated directly from the code, see the [Configuration Options Reference](configuration-generated.md), or use the interactive [Configuration Explorer](configuration-explorer.mdx) to search the options and build a `config.json`. This guide adds examples, file locations, and platform notes on top of those.
+:::
+
 {/* toc */}
 
 ## Table of Contents
@@ -15,6 +19,7 @@ This document details all available configuration options for the Teams for Linu
   - [Tray Icon](#tray-icon)
   - [Notification System](#notification-system)
   - [Incoming Call Handling](#incoming-call-handling)
+  - [Downloads](#downloads)
   - [Idle & Activity Detection](#idle--activity-detection)
   - [Authentication & SSO](#authentication--sso)
   - [Network & Proxy](#network--proxy)
@@ -51,9 +56,13 @@ Create a `config.json` file with your desired settings:
 
 ```json
 {
-  "closeAppOnCross": true,
+  "window": {
+    "closeOnCross": true
+  },
   "disableNotifications": false,
-  "customCSSName": "compactDark"
+  "appearance": {
+    "cssName": "compactDark"
+  }
 }
 ```
 
@@ -68,43 +77,93 @@ Place your `config.json` file in the appropriate location based on your installa
 > [!NOTE]
 > [yargs](https://www.npmjs.com/package/yargs) supports multiple configuration methods—refer to their documentation if you prefer using a configuration file over command-line arguments.
 
+## Startup Validation
+
+At startup the app validates your `config.json` against the option schema and logs any problems as `[CONFIG]` warnings. This is **warn-only**: an invalid entry is reported and then ignored, never blocking startup or changing existing behaviour. It catches the common mistakes:
+
+- **Unknown options** — typos or options from a different app version.
+- **Wrong types** — for example a string where a number is expected.
+- **Invalid `choices`** — a value outside an option's allowed set.
+
+Nested keys of object options (such as `mqtt.homeAssistant.enabled`) are checked the same way. Warnings name only the offending key, the expected type, and any allowed values — never your configured values, which may contain URLs, tokens, or email addresses.
+
+:::note
+Each option's **Apply** mode (whether a change takes effect immediately or after a restart) is listed in the [auto-generated reference](configuration-generated.md) and the [config explorer](configuration-explorer.mdx).
+:::
+
 ## Configuration Options Reference
+
+### Renamed options
+
+Options are moving from flat top-level names to nested namespaces, following the
+convention in [ADR-025](development/adr/025-config-option-naming-convention.md).
+Both spellings work: pick the nested name for new configuration, and the tables
+below mark each old name as deprecated and point at its replacement. Where you
+set both, the nested name wins.
+
+The old names keep working until **2.30.0**, and using one logs a single
+aggregated warning at startup naming every option to move.
+
+:::note
+During this transition the nested names are read from `config.json` only.
+Command-line flags and environment variables keep using the flat name, so
+`--partition nopersist` still works and `--app.partition nopersist` is silently
+ignored. The examples below use whichever spelling actually applies.
+:::
 
 ### Application Core
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `url` | `string` | `"https://teams.cloud.microsoft"` | Microsoft Teams URL |
-| `appTitle` | `string` | `"Microsoft Teams"` | Text to be suffixed with page title |
-| `partition` | `string` | `"persist:teams-4-linux"` | BrowserWindow webpreferences partition |
+| `app.url` | `string` | `"https://teams.cloud.microsoft"` | Microsoft Teams URL |
+| `url` | `string` | `"https://teams.cloud.microsoft"` | Deprecated, use `app.url` |
+| `app.title` | `string` | `"Microsoft Teams"` | Text to be suffixed with page title |
+| `appTitle` | `string` | `"Microsoft Teams"` | Deprecated, use `app.title` |
+| `app.partition` | `string` | `"persist:teams-4-linux"` | BrowserWindow webpreferences partition |
+| `partition` | `string` | `"persist:teams-4-linux"` | Deprecated, use `app.partition` |
 
 ### Window & UI Behavior
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `frame` | `boolean` | `true` | Specify false to create a Frameless Window |
-| `menubar` | `string` | `"auto"` | Menu bar behaviour. Choices: `auto`, `visible`, `hidden` |
-| `minimized` | `boolean` | `false` | Start the application minimized |
-| `closeAppOnCross` | `boolean` | `false` | Close the app when clicking the close (X) cross |
-| `alwaysOnTop` | `boolean` | `true` | Keep the pop-out window always on top of other windows |
-| `class` | `string` | `null` | Custom value for the WM_CLASS property |
+| `window.frame` | `boolean` | `true` | Specify false to create a Frameless Window |
+| `frame` | `boolean` | `true` | Deprecated, use `window.frame` |
+| `window.menubar` | `string` | `"auto"` | Menu bar behaviour. Choices: `auto`, `visible`, `hidden` |
+| `menubar` | `string` | `"auto"` | Deprecated, use `window.menubar` |
+| `window.minimized` | `boolean` | `false` | Start the application minimized |
+| `minimized` | `boolean` | `false` | Deprecated, use `window.minimized` |
+| `window.minimizeOnClose` | `boolean` | `false` | Minimize the window when clicking the close (X) cross instead of hiding it to the tray (ignored when `window.closeOnCross` is true) |
+| `minimizeOnClose` | `boolean` | `false` | Deprecated, use `window.minimizeOnClose` |
+| `window.closeOnCross` | `boolean` | `false` | Close the app when clicking the close (X) cross |
+| `closeAppOnCross` | `boolean` | `false` | Deprecated, use `window.closeOnCross` |
+| `window.alwaysOnTop` | `boolean` | `true` | Keep the pop-out window always on top of other windows |
+| `alwaysOnTop` | `boolean` | `true` | Deprecated, use `window.alwaysOnTop` |
+| `window.class` | `string` | `null` | Custom value for the WM_CLASS property |
+| `class` | `string` | `null` | Deprecated, use `window.class` |
 
 ### Theming & Appearance
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `customCSSName` | `string` | `""` | Custom CSS name. Options: "compactDark", "compactLight", "tweaks", "condensedDark", "condensedLight" |
-| `customCSSLocation` | `string` | `""` | Custom CSS styles file location |
-| `followSystemTheme` | `boolean` | `false` | Follow system theme |
+| `appearance.cssName` | `string` | `""` | Custom CSS name. Options: "compactDark", "compactLight", "tweaks", "condensedDark", "condensedLight" |
+| `customCSSName` | `string` | `""` | Deprecated, use `appearance.cssName` |
+| `appearance.cssLocation` | `string` | `""` | Custom CSS styles file location |
+| `customCSSLocation` | `string` | `""` | Deprecated, use `appearance.cssLocation` |
+| `appearance.followSystemTheme` | `boolean` | `false` | Follow the operating-system dark/light theme preference. Set `true` to drive Teams's theme from the OS preference. |
+| `followSystemTheme` | `boolean` | `false` | Deprecated, use `appearance.followSystemTheme` |
 
 ### Tray Icon
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `trayIconEnabled` | `boolean` | `true` | Enable tray icon |
-| `appIcon` | `string` | `""` | Teams app icon to show in the tray |
-| `appIconType` | `string` | `"default"` | Type of tray icon. Choices: `default`, `light`, `dark` |
-| `useMutationTitleLogic` | `boolean` | `true` | Use MutationObserver to update counter from title |
+| `tray.enabled` | `boolean` | `true` | Enable tray icon |
+| `trayIconEnabled` | `boolean` | `true` | Deprecated, use `tray.enabled` |
+| `tray.icon` | `string` | `""` | Custom app icon (PNG) for the tray, the window icon on Windows and Linux, and the dock on macOS. Also settable from the App Icon menu |
+| `appIcon` | `string` | `""` | Deprecated, use `tray.icon` |
+| `tray.iconType` | `string` | `"default"` | Type of tray icon. Choices: `default`, `light`, `dark` |
+| `appIconType` | `string` | `"default"` | Deprecated, use `tray.iconType` |
+| `tray.useMutationTitleLogic` | `boolean` | `true` | Use MutationObserver to update counter from title |
+| `useMutationTitleLogic` | `boolean` | `true` | Deprecated, use `tray.useMutationTitleLogic` |
 | `disableBadgeCount` | `boolean` | `false` | Disable the badge counter on the taskbar/dock icon |
 
 ### Notification System
@@ -118,17 +177,31 @@ Place your `config.json` file in the appropriate location based on your installa
 | `notificationMethod` | `string` | `"web"` | Notification method. Choices: `web`, `electron`, `custom` |
 | `customNotification` | `object` | `{ toastDuration: 5000 }` | Configuration for custom in-app toast notifications (used when `notificationMethod` is `custom`) |
 | `defaultNotificationUrgency` | `string` | `"normal"` | Default urgency for new notifications. Choices: `low`, `normal`, `critical` |
+| `notifications.timeoutType` | `string` | `"default"` | How long notifications stay in the system notification center (Linux/Windows only). Choices: `default` (auto-clear per system policy) or `never` (persist until the user dismisses, useful on GNOME and other desktops that auto-remove notifications). Mirrors Electron's Notification `timeoutType`. May not be honoured by every notification daemon. |
+| `notifications.electron.clickAction` | `string` | `"show"` | What clicking a notification does to the main window (`notificationMethod: "electron"` only). Choices: `show` (reveal the window, current behaviour), `restore` (also un-minimise and focus, which helps on GNOME where a plain show does not raise the window) or `none` (do nothing). On Linux whether focus is honoured depends on the window manager. |
 
 ### Incoming Call Handling
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `enableIncomingCallToast` | `boolean` | `false` | Enable incoming call toast |
-| `incomingCallCommand` | `string` | `null` | Command or executable to run when an incoming call is detected |
-| `incomingCallCommandArgs` | `array` | `[]` | Arguments to pass to the incoming call command |
+| `incomingCalls.toast` | `boolean` | `false` | Enable incoming call toast |
+| `enableIncomingCallToast` | `boolean` | `false` | Deprecated, use `incomingCalls.toast` |
+| `incomingCalls.command` | `string` | `null` | Command or executable to run when an incoming call is detected |
+| `incomingCallCommand` | `string` | `null` | Deprecated, use `incomingCalls.command` |
+| `incomingCalls.commandArgs` | `array` | `[]` | Arguments to pass to the incoming call command |
+| `incomingCallCommandArgs` | `array` | `[]` | Deprecated, use `incomingCalls.commandArgs` |
 
 > [!NOTE]
 > See [Incoming Call Command](#incoming-call-command) for detailed usage examples.
+
+### Downloads
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `download.enabled` | `boolean` | `false` | Master switch for the download feedback feature. Opt-in while in early development; set to `true` to enable the manager. The sub-flags only take effect when `enabled` is `true`. |
+| `download.notifyOnDownloadComplete` | `boolean` | `true` | Show a system notification when a file download finishes (click opens the containing folder). Set to `false` to suppress. |
+| `download.showProgressBar` | `boolean` | `true` | Drive in-flight feedback through `BrowserWindow.setProgressBar` (macOS / Windows; effectively no-op on Linux), a `com.canonical.Unity.LauncherEntry` D-Bus broadcast that Ubuntu Dock and Dash-to-Dock subscribe to (GNOME / Ubuntu users), and an `org.kde.JobViewServer` per-download view rendered in KDE Plasma's notification widget. The window-title prefix is a separate sub-flag (`showTitlePrefix`). |
+| `download.showTitlePrefix` | `boolean` | `true` | Also prefix the main window title with `[34%]` (or `[downloading]`) while a download is in flight. Every WM/DE renders the window title in its taskbar tooltip / Alt-Tab, so this is a portable fallback for environments where the other channels are unavailable. Set to `false` on KDE / Ubuntu where the JobView / LauncherEntry already shows progress and the title churn is redundant. |
 
 ### Idle & Activity Detection
 
@@ -174,6 +247,70 @@ rm /tmp/teams-for-linux-idle-state-$USER
 
 The state file is automatically cleaned up when the app exits.
 
+:::note Requires `awayOnSystemIdle`
+The state file only controls what the app *believes* the system idle state is. Presence is
+still only changed when `awayOnSystemIdle` is `true`, so set both:
+
+```json
+{
+  "awayOnSystemIdle": true,
+  "idleDetection": { "forceState": true }
+}
+```
+:::
+
+#### Driving the state file automatically (Wayland)
+
+Under Wayland, `powerMonitor` cannot see user input, so nothing populates the state file on its
+own. Any idle daemon that can run a command on timeout and on resume will do. On a compositor
+implementing `ext-idle-notify-v1` (KWin, sway, Hyprland, and most wlroots compositors), `swayidle`
+works well as a user service:
+
+`~/.config/systemd/user/teams-idle-watcher.service`
+
+```ini
+[Unit]
+Description=Teams for Linux presence idle watcher (swayidle -> state file)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+Environment=STATEFILE=/tmp/teams-for-linux-idle-state-%u
+ExecStartPre=/bin/sh -c 'echo active > "$STATEFILE"'
+ExecStart=/usr/bin/swayidle -w \
+  timeout 300 'echo inactive > "$STATEFILE"' \
+  resume 'echo active > "$STATEFILE"' \
+  before-sleep 'echo inactive > "$STATEFILE"'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
+```
+
+Enable it with `systemctl --user enable --now teams-idle-watcher.service`.
+
+Three things are worth knowing before you rely on this:
+
+**The daemon's timeout is the idle delay, not `appIdleTimeout`.** When the state file says
+`inactive` the app reports idle straight away and never consults `powerMonitor`, so
+`appIdleTimeout` has no effect on this path. Set the delay you want in the `timeout` line above.
+`appIdleTimeout` still applies when the state file is absent and detection falls back to
+`powerMonitor`.
+
+**The app deletes the state file when it exits.** `swayidle` only writes on a transition, so after
+restarting Teams for Linux the file stays missing until the next idle or resume. The
+`ExecStartPre` line above re-seeds it, which means restarting the watcher alongside the app
+restores a known state.
+
+**A stale `inactive` pins you idle.** If the watcher stops while the file still reads `inactive`,
+the app keeps reporting idle indefinitely with nothing to correct it. Removing the file returns
+you to automatic detection.
+
+Content other than `active` or `inactive` is logged as a warning and ignored, falling through to
+`powerMonitor`.
+
 ### Authentication & SSO
 
 | Option | Type | Default | Description |
@@ -187,6 +324,37 @@ The state file is automatically cleaned up when the app exits.
 |--------|------|---------|-------------|
 | `ssoBasicAuthUser` | `string` | `""` | User to use for SSO basic auth |
 | `ssoBasicAuthPasswordCommand` | `string` | `""` | Command to execute to retrieve password for SSO basic auth |
+
+#### Web Login Password Pre-fill
+
+If your organisation expires the Teams session frequently (short-lived tokens, sign-in-frequency policies), you land on the Microsoft/federated **web** login page most launches. Microsoft remembers your account (email) but never the password, so you retype it every time.
+
+Set `auth.webLogin.passwordCommand` to a command that prints your password (first line of stdout); the app pre-fills it into the password field on the login page. It runs in a shell, so use your own password manager — the app itself stores no secret. Set `auth.webLogin.user` to also pre-fill the email/username field when it is blank (useful when the account isn't remembered and you land on the "Enter your email" step).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `auth.webLogin.user` | `string` | `""` | Email/username pre-filled into the account field when it is empty. Empty disables it. |
+| `auth.webLogin.passwordCommand` | `string` | `""` | Command whose first stdout line is pre-filled into the web login password field. Empty disables the feature. |
+| `auth.webLogin.extraHosts` | `array` | `[]` | Extra host suffixes to treat as login pages, in addition to the built-in Microsoft hosts (`login.microsoftonline.com`, `login.microsoft.com`, `login.live.com`). Add your federated IdP host if sign-in happens off the Microsoft hosts. |
+| `auth.webLogin.autoSubmit` | `boolean` | `false` | Automatically advance each step: click Next after the email and Sign in after the password. Off by default so you review and submit yourself. |
+| `auth.webLogin.verifyMethod` | `string` | `""` | On the "Verify your identity" (MFA) page, click the option whose label starts with this text, e.g. `Text` for SMS. Empty disables it. Best-effort text match. |
+
+```json
+{
+  "auth": {
+    "webLogin": {
+      "user": "you@example.org",
+      "passwordCommand": "pass show work/teams",
+      "autoSubmit": true,
+      "verifyMethod": "Text"
+    }
+  }
+}
+```
+
+With the example above, the app fills the email and clicks Next, fills the password and clicks Sign in, then on the MFA "Verify your identity" page clicks the **Text** (SMS) option — leaving you only to enter the texted code. Drop `auth.webLogin.autoSubmit`/`auth.webLogin.verifyMethod` if you prefer to click through the steps yourself.
+
+This is separate from **Basic Authentication** above: `ssoBasicAuthPasswordCommand` feeds the native HTTP Basic/NTLM dialog, whereas `auth.webLogin.passwordCommand` fills the browser login form. The password is passed only to the login page (never logged or persisted) and only on the configured login hosts. If your sign-in page is a company-branded `login.microsoftonline.com` page (a logo/background on the standard Microsoft page), the defaults already cover it; only add `auth.webLogin.extraHosts` if the password page is served from a different hostname.
 
 #### InTune SSO
 
@@ -208,7 +376,7 @@ InTune SSO uses a nested `auth.intune` configuration:
 | `auth.intune.enabled` | `boolean` | `false` | Enable Single-Sign-On using Microsoft InTune |
 | `auth.intune.user` | `string` | `""` | User (e-mail) to use for InTune SSO |
 
-**Legacy Options (Deprecated):**
+**Removed Options (migrate before upgrading):**
 
 | Old Option | New Option | Notes |
 |------------|------------|-------|
@@ -219,6 +387,43 @@ InTune SSO uses a nested `auth.intune` configuration:
 
 Report-only Content Security Policy headers are automatically stripped for all non-Teams domains. This is necessary because Electron's `contextIsolation: false` setting (required for Teams DOM access) erroneously enforces report-only CSP as blocking, which breaks third-party SSO providers like Symantec VIP. No configuration is needed.
 
+#### WebAuthn / FIDO2 Security Keys
+
+Hardware security key authentication (YubiKey, SoloKeys, etc.) for Microsoft Entra ID login. On Linux, Electron's Chromium lacks native WebAuthn hardware support, so this module intercepts `navigator.credentials` calls and routes them to `fido2-tools`. On macOS and Windows, Electron handles WebAuthn natively and this feature is not needed.
+
+Requires the `fido2-tools` system package: `sudo apt install fido2-tools` (Debian/Ubuntu) or `sudo dnf install fido2-tools` (Fedora) or `sudo pacman -S libfido2` (Arch). The official deb and rpm packages list it as a recommended dependency, so it is installed automatically unless weak dependencies are disabled.
+
+```json
+{
+  "auth": {
+    "webauthn": {
+      "enabled": true
+    }
+  }
+}
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `auth.webauthn.enabled` | `boolean` | `false` | Enable FIDO2 hardware security key support for WebAuthn authentication on Linux |
+| `auth.webauthn.debug` | `boolean` | `false` | Enable verbose WebAuthn diagnostic logging (useful for beta testers troubleshooting key registration) |
+| `auth.webauthn.extraOrigins` | `array` | `[]` | Extra sign-in origins allowed to use hardware keys, in addition to the built-in Microsoft login origins |
+
+Interception is limited to the Microsoft login origins (`https://login.microsoftonline.com`, `https://login.microsoft.com`, `https://login.live.com`). If your tenant is federated and the key prompt is served by your own identity provider, the ceremony is blocked and the log shows `[WEBAUTHN] Blocked request { reason: 'origin-not-allowed' }`. Add that origin to `auth.webauthn.extraOrigins` and restart:
+
+```json
+{
+  "auth": {
+    "webauthn": {
+      "enabled": true,
+      "extraOrigins": ["https://sso.example.com"]
+    }
+  }
+}
+```
+
+Entries are exact `https` origins: scheme, host and, where the identity provider is not on 443, its port (`https://sso.example.com:8443`). Wildcards, paths and `http` entries are ignored, so a subdomain of a listed origin is not covered and has to be listed in its own right.
+
 #### Certificates
 
 | Option | Type | Default | Description |
@@ -226,9 +431,60 @@ Report-only Content Security Policy headers are automatically stripped for all n
 | `clientCertPath` | `string` | `""` | Custom Client Certs for corporate authentication (certificate must be in pkcs12 format) |
 | `clientCertPassword` | `string` | `""` | Custom Client Certs password for corporate authentication |
 
+#### Smartcard / Client Certificate PIN (Linux)
+
+When a client certificate lives on a smartcard or other PKCS#11 token, NSS needs the token PIN before it can present the certificate. On Linux, Chromium delegates that PIN prompt to the application, so without a handler the certificate is never presented and sign-in fails silently. Enabling this shows a PIN dialog when a token needs unlocking. The feature is Linux only and off by default; macOS and Windows provide native PIN prompts. Changing it requires a restart. See issue #2639.
+
+```json
+{
+  "auth": {
+    "clientCertificate": {
+      "pinDialog": {
+        "enabled": true
+      }
+    }
+  }
+}
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `auth.clientCertificate.pinDialog.enabled` | `boolean` | `false` | Show a PIN dialog for smartcard / PKCS#11 client certificates on Linux. No effect on macOS or Windows. |
+
+Configuring the PKCS#11 module itself is your responsibility. A typical OpenSC setup registers the card with the NSS database Chromium uses (paths vary by distro):
+
+```bash
+sudo apt install opensc                       # or distro equivalent
+modutil -dbdir sql:$HOME/.pki/nssdb -add opensc -libfile /usr/lib/x86_64-linux-gnu/opensc-pkcs11.so
+```
+
+The token name and requesting hostname appear in the dialog but are never logged, and the entered PIN is never logged or written to disk.
+
+#### Cookies
+
+Some localStorage tokens get encrypted by a Session cookie 'msal.cache.encryption'. Electron drops this cookie on process exits, so the encrypted tokens can't be decrypted anymore. This forces a fresh login on every start and clears all local settings, like selected camera, microphone, meeting backgrounds or "Keep my current status when I'm active outside of Teams on the web". This sets an expiration date for the cookie to promote it from a session cookie, so it survives restarts.
+
+This is on by default. Microsoft mints the cookie as session-scoped deliberately, so keeping it means the token-decryption key stays on disk for longer than Microsoft intended. If you prefer that tradeoff the other way around, set `enabled` to `false` and sign in again after each restart.
+
+```json
+{
+  "auth": {
+    "keepMsalCacheEncryptionCookie": {
+      "enabled": false,
+      "days": 400
+    }
+  }
+}
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `auth.keepMsalCacheEncryptionCookie.enabled` | `boolean` | `true` | Sets an expiration date for the 'msal.cache.encryption' cookie to keep it after restarts. |
+| `auth.keepMsalCacheEncryptionCookie.days` | `number` | `400` | Sets the amount of days the 'msal.cache.encryption' cookie should be kept for. Between 1 and 400. |
+
 ### Multi-Account Profile Switcher (Experimental)
 
-> **Status:** Phase 1 MVP scaffolding. The flag is wired through config, but the switcher UI, profile CRUD, and session isolation plumbing land in follow-up PRs tracked in [ADR-020](development/adr/020-multi-account-profile-switcher). Enabling the flag today has no user-visible effect beyond the Intune mutex check described below.
+> **Status:** Phase 1 shipped. With the flag enabled you get a bottom-left **account switcher pill** (dropdown with every profile + Add/Manage), a **Profiles** menu (Add / Switch / Manage / Remove profiles), `Ctrl+Alt+1…5` shortcuts for pinned profiles (pin via **Manage profiles…**, up to 5; Linux/Windows), first-run migration of your existing session into a default "My account" profile, and per-profile session isolation — each profile runs against its own `persist:teams-profile-{uuid}` partition so cookies, tokens, and storage never cross tenants. See [ADR-020](development/adr/020-multi-account-profile-switcher) for the full design and later phases (background notifications, power features).
 
 Opt-in configuration for the single-window multi-tenant account switcher:
 
@@ -244,7 +500,7 @@ Opt-in configuration for the single-window multi-tenant account switcher:
 |--------|------|---------|-------------|
 | `multiAccount.enabled` | `boolean` | `false` | Opt-in flag for the multi-account profile switcher. See [ADR-020](development/adr/020-multi-account-profile-switcher) for the full design. |
 
-**Mutual exclusion with Intune SSO:** If `multiAccount.enabled` is `true` at startup and Intune SSO is enabled via either `auth.intune.enabled` or the legacy `ssoInTuneEnabled` flag, the app logs a warning, appends it to `config.warnings`, and disables multi-account for the session. The Linux D-Bus Microsoft Identity Broker has undocumented behavior around concurrent enrollments for different UPNs on one machine, so Phase 1 treats Intune as single-profile-only. Users who need both can track follow-up discussion on the ADR.
+**Mutual exclusion with Intune SSO:** If `multiAccount.enabled` is `true` at startup and `auth.intune.enabled` is also `true`, the app logs a warning, appends it to `config.warnings`, and disables multi-account for the session. The Linux D-Bus Microsoft Identity Broker has undocumented behavior around concurrent enrollments for different UPNs on one machine, so Phase 1 treats Intune as single-profile-only. Users who need both can track follow-up discussion on the ADR.
 
 ### Network & Proxy
 
@@ -252,6 +508,7 @@ Opt-in configuration for the single-window multi-tenant account switcher:
 |--------|------|---------|-------------|
 | `proxyServer` | `string` | `null` | Proxy Server with format address:port |
 | `network.webRTCIPHandlingPolicy` | `string` | `null` | Controls which network interfaces WebRTC uses for ICE candidate gathering. Choices: `default`, `default_public_and_private_interfaces`, `default_public_interface_only`, `disable_non_proxied_udp` |
+| `network.disableQuic` | `boolean` | `true` | Append Chromium's `--disable-quic` switch at startup. Defaults to `true` to work around issue [#2518](https://github.com/IsmaelMartinez/teams-for-linux/issues/2518) (concurrent SharePoint downloads abort with `ERR_QUIC_PROTOCOL_ERROR` on the shared QUIC session). Set to `false` to re-enable QUIC if a future Chromium release fixes the underlying transport bug. |
 
 *   `default` - Exposes user's public and local IPs. This is the default behavior. When this policy is used, WebRTC has the right to enumerate all interfaces and bind them to discover public interfaces.
 
@@ -261,8 +518,9 @@ Opt-in configuration for the single-window multi-tenant account switcher:
 
 *   `disable_non_proxied_udp` - Does not expose public or local IPs. When this policy is used, WebRTC should only use TCP to contact peers or servers unless the proxy server supports UDP.
 
-[!NOTE]
+:::note
 **`network.webRTCIPHandlingPolicy`** is useful on systems with multiple network interfaces (e.g. WiFi for internet and a secondary Ethernet adapter with no internet gateway). Without this option, WebRTC advertises all interfaces as ICE candidates, which can cause asymmetric STUN routing and drop calls to **OnHold**. Setting it to `default_public_interface_only` restricts ICE gathering to the interface holding the default route only.
+:::
 
 ```json
 "network": {
@@ -292,7 +550,7 @@ Screen sharing settings are organized under the `screenSharing` configuration ob
 | `screenSharing.thumbnail.alwaysOnTop` | `boolean` | `true` | Keep thumbnail window always on top |
 | `screenSharing.lockInhibitionMethod` | `string` | `"Electron"` | Screen lock inhibition method. Choices: `Electron`, `WakeLockSentinel` |
 
-**Legacy Options (Deprecated):**
+**Removed Options (migrate before upgrading):**
 
 | Old Option | New Option | Notes |
 |------------|------------|-------|
@@ -307,6 +565,7 @@ Media settings are organized under the `media` configuration object with subgrou
 |--------|------|---------|-------------|
 | `media.microphone.disableAutogain` | `boolean` | `false` | Disable microphone auto gain control - prevents Teams from automatically adjusting microphone volume levels. Useful for professional audio setups or when manual gain control is preferred |
 | `media.microphone.speakingIndicator` | `boolean` | `false` | Enable visual overlay showing microphone state during calls (speaking/silent/muted). When enabled, also provides WebRTC-based call state detection. Note: when `mqtt.enabled` is true, the WebRTC call detection activates automatically even without this option, ensuring reliable `in-call` topic publishing |
+| `media.microphone.ignoreSystemMute` | `boolean` | `false` | Stop Teams' mute button from following the operating system microphone mute on Linux. Chromium polls the OS capture source and reports its mute to the page as a `MediaStreamTrack` mute event, which Teams mirrors onto its own button. Enable this to keep the Teams button where you left it and rely solely on your system/hotkey mute, which still cuts the transmitted audio. Only the local capture track is affected; remote participants' mute state stays visible |
 | `media.microphone.overrideConstraints.enabled` | `boolean` | `false` | Enable overriding the microphone audio constraints Teams requests via `getUserMedia`. Lets users disable WebRTC APM processing (echo cancellation, noise suppression, auto gain control) or pin `channelCount` / `sampleRate` at the Chromium/WebRTC layer — the Linux equivalent of "High fidelity music mode" (Windows-only in the official Teams client). Only the keys you set are overridden; omitted keys are left untouched. |
 | `media.microphone.overrideConstraints.echoCancellation` | `boolean` | - | When set, overrides `getUserMedia`'s `echoCancellation` constraint. Omit to leave it untouched. |
 | `media.microphone.overrideConstraints.noiseSuppression` | `boolean` | - | When set, overrides `getUserMedia`'s `noiseSuppression` constraint. Omit to leave it untouched. |
@@ -334,7 +593,7 @@ Media settings are organized under the `media` configuration object with subgrou
 }
 ```
 
-**Legacy Options (Deprecated):**
+**Removed Options (migrate before upgrading):**
 
 | Old Option | New Option | Notes |
 |------------|------------|-------|
@@ -349,25 +608,46 @@ Media settings are organized under the `media` configuration object with subgrou
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `isCustomBackgroundEnabled` | `boolean` | `false` | Enable custom background feature |
-| `customBGServiceBaseUrl` | `string` | `"http://localhost"` | Base URL of the server which provides custom background images |
-| `customBGServiceConfigFetchInterval` | `number` | `0` | Poll interval in seconds to download background service config |
+| `customBackground.enabled` | `boolean` | `false` | Enable custom background feature |
+| `isCustomBackgroundEnabled` | `boolean` | `false` | Deprecated, use `customBackground.enabled` |
+| `customBackground.serviceBaseUrl` | `string` | `"http://localhost"` | Base URL of the server which provides custom background images |
+| `customBGServiceBaseUrl` | `string` | `"http://localhost"` | Deprecated, use `customBackground.serviceBaseUrl` |
+| `customBackground.configFetchInterval` | `number` | `0` | Poll interval in seconds to download background service config |
+| `customBGServiceConfigFetchInterval` | `number` | `0` | Deprecated, use `customBackground.configFetchInterval` |
+
+### Custom Stickers
+
+A floating sticker panel that lists image files from a local folder and pastes the selected one into the focused chat compose box. Off by default. See [`app/customStickers/README.md`](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/customStickers/README.md) for details.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `customStickers.enabled` | `boolean` | `false` | Master flag for the custom stickers feature |
+| `customStickers.folder` | `string` | `""` | Absolute path to the sticker folder. Empty string uses `<userData>/stickers/`, which is created on first run if missing |
+| `customStickers.formats` | `array` | `["png", "jpg", "jpeg", "gif", "webp"]` | File extensions the scanner accepts (lowercase, no leading dot). The scanner reads the configured folder plus one level of subdirectories, so stickers organised under `<folder>/<group>/` are visible. |
+| `customStickers.urlImport.enabled` | `boolean` | `true` | Allow importing stickers from HTTPS URLs via the panel header input or by dropping a URL on the panel |
+| `customStickers.urlImport.allowedContentTypes` | `array` | `["image/png", "image/jpeg", "image/gif", "image/webp"]` | Response content-types the wrapper will accept and save when importing from a URL |
+| `customStickers.urlImport.maxBytes` | `number` | `5242880` | Per-file size cap (in bytes) for URL imports. Responses larger than this are rejected |
 
 ### URL & Protocol Handling
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `defaultURLHandler` | `string` | `""` | Default application to open HTTP URLs |
-| `meetupJoinRegEx` | `string` | `^https://teams\\.(?:microsoft\\.com|live\\.com|cloud\\.microsoft)/(v2/\\?meetingjoin=|meet/|l/(?:app|call|channel|chat|entity|file|meet(?:ing|up-join)|message|task|team)/)` | Regex for Teams meetup-join and related links |
-| `msTeamsProtocols` | `object` | `{ v1: "^msteams:\/l\/(?:meetup-join\|channel\|chat\|message)", v2: "^msteams:\/\/teams\.microsoft\.com\/l\/(?:meetup-join\|channel\|chat\|message)" }` | Regular expressions for Microsoft Teams protocol links |
-| `onNewWindowOpenMeetupJoinUrlInApp` | `boolean` | `true` | Open meetupJoinRegEx URLs in the app instead of default browser |
+| `urlHandling.defaultHandler` | `string` | `""` | Default application to open HTTP URLs |
+| `defaultURLHandler` | `string` | `""` | Deprecated, use `urlHandling.defaultHandler` |
+| `urlHandling.meetupJoinRegEx` | `string` | `^https://teams\\.(?:microsoft\\.com\|live\\.com\|cloud\\.microsoft)/(v2/\\?meetingjoin=\|meet/\|l/(?:app\|call\|channel\|chat\|entity\|file\|meet(?:ing\|up-join)\|message\|task\|team)/)` | Regex for Teams meetup-join and related links |
+| `meetupJoinRegEx` | `string` | `^https://teams\\.(?:microsoft\\.com\|live\\.com\|cloud\\.microsoft)/(v2/\\?meetingjoin=\|meet/\|l/(?:app\|call\|channel\|chat\|entity\|file\|meet(?:ing\|up-join)\|message\|task\|team)/)` | Deprecated, use `urlHandling.meetupJoinRegEx` |
+| `msTeamsProtocols` | `object` | `{ v1: "^msteams:/(?:meet/\|l/(?:app\|call\|channel\|chat\|entity\|file\|meet(?:ing\|up-join)\|message\|task\|team)/)", v2: "^msteams://teams\\.(?:microsoft\\.com\|live\\.com\|cloud\\.microsoft)/(?:meet/\|l/(?:app\|call\|channel\|chat\|entity\|file\|meet(?:ing\|up-join)\|message\|task\|team)/)" }` | Regular expressions for Microsoft Teams protocol links (v1 = legacy `msteams:` scheme, v2 = host-based `msteams://` scheme) |
+| `urlHandling.openMeetupJoinInApp` | `boolean` | `true` | Open `urlHandling.meetupJoinRegEx` URLs in the app instead of default browser |
+| `onNewWindowOpenMeetupJoinUrlInApp` | `boolean` | `true` | Deprecated, use `urlHandling.openMeetupJoinInApp` |
 
 ### Keyboard Shortcuts
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `disableGlobalShortcuts` | `array` | `[]` | Array of global shortcuts to disable while app is in focus |
-| `globalShortcuts` | `array` | `[]` | Global keyboard shortcuts that work system-wide (opt-in, disabled by default). See [Global Shortcuts](#global-shortcuts) |
+| `shortcuts.global` | `array` | `[]` | Global keyboard shortcuts that work system-wide (opt-in, disabled by default). See [Global Shortcuts](#global-shortcuts) |
+| `shortcuts.disableWhileFocused` | `array` | `[]` | Array of global shortcuts to disable while app is in focus |
+| `globalShortcuts` | `array` | `[]` | Deprecated, use `shortcuts.global` |
+| `disableGlobalShortcuts` | `array` | `[]` | Deprecated, use `shortcuts.disableWhileFocused` |
 
 ### MQTT Integration
 
@@ -382,6 +662,9 @@ Media settings are organized under the `media` configuration object with subgrou
 | `mqtt.statusTopic` | `string` | `"status"` | Topic name for status messages (outbound, combined with topicPrefix) |
 | `mqtt.commandTopic` | `string` | `""` | Topic name for receiving commands (inbound). Leave empty to disable (status-only mode). Set to `"command"` to enable bidirectional mode. |
 | `mqtt.statusCheckInterval` | `number` | `10000` | Polling interval in milliseconds for status detection fallback |
+| `mqtt.homeAssistant.enabled` | `boolean` | `false` | Enable Home Assistant MQTT auto-discovery (publishes discovery configs so HA creates entities automatically) |
+| `mqtt.homeAssistant.discoveryPrefix` | `string` | `"homeassistant"` | MQTT discovery topic prefix used by Home Assistant |
+| `mqtt.homeAssistant.deviceName` | `string` | `"Teams for Linux"` | Device name shown in Home Assistant |
 
 **Example MQTT Configuration:**
 ```json
@@ -392,10 +675,15 @@ Media settings are organized under the `media` configuration object with subgrou
     "username": "teams-user",
     "password": "secret",
     "clientId": "teams-for-linux",
-    "topicPrefix": "home/office",
-    "statusTopic": "teams/status",
-    "commandTopic": "teams/command",
-    "statusCheckInterval": 10000
+    "topicPrefix": "teams",
+    "statusTopic": "status",
+    "commandTopic": "command",
+    "statusCheckInterval": 10000,
+    "homeAssistant": {
+      "enabled": true,
+      "discoveryPrefix": "homeassistant",
+      "deviceName": "Teams for Linux"
+    }
   }
 }
 ```
@@ -407,10 +695,11 @@ When MQTT is enabled, the following topics are automatically published:
 | Topic | Payload | Description |
 |-------|---------|-------------|
 | `\{topicPrefix\}/connected` | `"true"` or `"false"` | App connection state (uses MQTT Last Will) |
-| `\{topicPrefix\}/status` | JSON object | User presence status (Available, Busy, DND, Away, BRB) |
+| `\{topicPrefix\}/\{statusTopic\}` | JSON object | User presence status (Available, Busy, DND, Away, BRB) |
 | `\{topicPrefix\}/in-call` | `"true"` or `"false"` | Active call state (connected/disconnected). Uses WebRTC fallback for reliable detection even from popup windows. |
-| `\{topicPrefix\}/camera` | `"true"` or `"false"` | Camera on/off state (Phase 2) |
-| `\{topicPrefix\}/microphone` | `"true"` or `"false"` | Microphone on/off state (Phase 2) |
+| `\{topicPrefix\}/camera` | `"true"` or `"false"` | Camera on/off state (monitors video sender track via WebRTC, filters out screen-sharing tracks) |
+| `\{topicPrefix\}/microphone` | `"speaking"` \| `"silent"` \| `"muted"` \| `"off"` | Microphone state derived from the WebRTC speaking-indicator. `speaking` = audio is being transmitted, `silent` = mic open but quiet, `muted` = Teams has zeroed the audio signal, `off` = not in a call. Activates when `mqtt.enabled` is true (no separate toggle required). |
+| `\{topicPrefix\}/incoming-call` | `"true"` or `"false"` | Incoming call ringing state. Fires before user accepts. Parity with `incomingCallCommand`. Covers 1:1 ring-type calls, calls from phone numbers, and call-queue calls. |
 | `\{topicPrefix\}/screen-sharing` | `"true"` or `"false"` | Screen sharing active state |
 
 All topics use retained messages by default, ensuring subscribers receive the last known state immediately upon connecting.
@@ -463,8 +752,10 @@ All topics use retained messages by default, ensuring subscribers receive the la
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `disableGpu` | `boolean` | `false` | Disable GPU and hardware acceleration |
-| `electronCLIFlags` | `array` | `[]` | Electron CLI flags |
+| `performance.disableGpu` | `boolean` | `false` | Disable GPU and hardware acceleration |
+| `disableGpu` | `boolean` | `false` | Deprecated, use `performance.disableGpu` |
+| `performance.electronCLIFlags` | `array` | `[]` | Electron CLI flags |
+| `electronCLIFlags` | `array` | `[]` | Deprecated, use `performance.electronCLIFlags` |
 
 ### Wayland
 
@@ -487,7 +778,8 @@ Wayland display server settings are organized under the `wayland` configuration 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `cacheManagement` | `object` | `{ enabled: false, maxCacheSizeMB: 600, cacheCheckIntervalMs: 3600000 }` | Cache management configuration |
-| `clearStorageData` | `boolean` | `null` | Flag to clear storage data |
+| `storage.clearData` | `boolean` \| `object` | `null` | Clear storage data on start. `true` clears everything; an object is passed through as Electron [`ClearStorageDataOptions`](https://www.electronjs.org/docs/latest/api/session#sesclearstoragedataoptions), for example `{"storages": ["cookies"]}` |
+| `clearStorageData` | `boolean` | `null` | Deprecated, use `storage.clearData` |
 
 > [!NOTE]
 > See [Cache Management](#cache-management) for detailed configuration and usage examples.
@@ -496,18 +788,24 @@ Wayland display server settings are organized under the `wayland` configuration 
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `webDebug` | `boolean` | `false` | Enable debug at start |
+| `development.webDebug` | `boolean` | `false` | Enable debug at start |
+| `webDebug` | `boolean` | `false` | Deprecated, use `development.webDebug` |
 | `logConfig` | `object` | `{ transports: { console: { level: "info" }, file: { level: false } } }` | Electron-log configuration |
-| `watchConfigFile` | `boolean` | `false` | Watch for changes in config file and reload the app |
+| `development.watchConfigFile` | `boolean` | `false` | Watch for changes in config file and reload the app |
+| `watchConfigFile` | `boolean` | `false` | Deprecated, use `development.watchConfigFile` |
 
 ### Advanced Platform Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `chromeUserAgent` | `string` | `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36` | Google Chrome User Agent |
-| `emulateWinChromiumPlatform` | `boolean` | `false` | Use windows platform information in chromium (helpful if MFA app doesn't support Linux) |
-| `spellCheckerLanguages` | `array` | `[]` | Array of languages to use with Electron's spell checker |
-| `disableTimestampOnCopy` | `boolean` | `false` | Controls whether timestamps are included when copying messages |
+| `platform.chromeUserAgent` | `string` | `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/<version> Safari/537.36` | Google Chrome User Agent |
+| `chromeUserAgent` | `string` | `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/<version> Safari/537.36` | Deprecated, use `platform.chromeUserAgent` |
+| `platform.emulateWindowsChromium` | `boolean` | `false` | Use windows platform information in chromium (helpful if MFA app doesn't support Linux) |
+| `emulateWinChromiumPlatform` | `boolean` | `false` | Deprecated, use `platform.emulateWindowsChromium` |
+| `platform.spellCheckerLanguages` | `array` | `[]` | Array of languages to use with Electron's spell checker |
+| `spellCheckerLanguages` | `array` | `[]` | Deprecated, use `platform.spellCheckerLanguages` |
+| `platform.disableTimestampOnCopy` | `boolean` | `false` | Controls whether timestamps are included when copying messages |
+| `disableTimestampOnCopy` | `boolean` | `false` | Deprecated, use `platform.disableTimestampOnCopy` |
 
 :::note Wayland GPU Handling
 When running under Wayland, GPU acceleration is **automatically disabled by default** to prevent blank window issues. To enable GPU acceleration on Wayland, you can explicitly override this behavior using either:
@@ -515,7 +813,9 @@ When running under Wayland, GPU acceleration is **automatically disabled by defa
 **Configuration file** (`config.json`):
 ```json
 {
-  "disableGpu": false
+  "performance": {
+    "disableGpu": false
+  }
 }
 ```
 
@@ -554,16 +854,20 @@ When enabled, this flag:
 #### Minimal Configuration
 ```json
 {
-  "closeAppOnCross": true
+  "window": {
+    "closeOnCross": true
+  }
 }
 ```
 
 #### Dark Theme with Notifications Disabled
 ```json
 {
-  "customCSSName": "compactDark",
-  "disableNotifications": true,
-  "followSystemTheme": true
+  "appearance": {
+    "cssName": "compactDark",
+    "followSystemTheme": true
+  },
+  "disableNotifications": true
 }
 ```
 
@@ -574,12 +878,10 @@ When enabled, this flag:
     "intune": {
       "enabled": true,
       "user": "user@company.com"
-    },
-    "certificate": {
-      "path": "/path/to/cert.p12",
-      "password": "password"
     }
   },
+  "clientCertPath": "/path/to/cert.p12",
+  "clientCertPassword": "password",
   "proxyServer": "proxy.company.com:8080"
 }
 ```
@@ -644,6 +946,8 @@ Teams for Linux supports system-wide configuration files for enterprise and mult
 
 > [!NOTE]
 > User configurations take precedence over system-wide configurations. This allows administrators to set organization-wide defaults while still allowing individual users to customize their settings.
+>
+> The files merge per setting: a user file that sets one field inside an object option such as `mqtt` or `network` keeps every other field from the system file and the built-in defaults. Lists such as `electronCLIFlags` are replaced, not combined.
 
 #### Example System-wide Config
 
@@ -651,14 +955,18 @@ Create `/etc/teams-for-linux/config.json` to set organization-wide defaults:
 
 ```json
 {
-  "closeAppOnCross": false,
+  "window": {
+    "closeOnCross": false
+  },
   "disableNotifications": false,
   "screenSharing": {
     "thumbnail": {
       "enabled": true
     }
   },
-  "customCSSName": "compactDark",
+  "appearance": {
+    "cssName": "compactDark"
+  },
   "auth": {
     "intune": {
       "enabled": true
@@ -676,9 +984,11 @@ The configuration file can include Electron CLI flags that will be added when th
 
 ```json
 {
-  "electronCLIFlags": [
-    "disable-software-rasterizer"
-  ]
+  "performance": {
+    "electronCLIFlags": [
+      "disable-software-rasterizer"
+    ]
+  }
 }
 ```
 
@@ -686,7 +996,7 @@ The configuration file can include Electron CLI flags that will be added when th
 > For options that require a value, provide them as an array where the first element is the flag and the second is its value. If no value is needed, you can use a simple string.
 
 > [!WARNING]
-> The `ozone-platform` flag **cannot** be set via `electronCLIFlags` because it must be applied before the Electron process starts (before any JavaScript executes). To override the default X11 mode, pass `--ozone-platform=wayland` or `--ozone-platform=auto` as a command-line argument when launching the app, or edit the `Exec=` line in your `.desktop` file. See [Troubleshooting: Wayland / Display Issues](troubleshooting.md#wayland--display-issues) for details.
+> The `ozone-platform` flag **cannot** be set via `electronCLIFlags` because it must be applied before the Electron process starts (before any JavaScript executes). The current default is `--ozone-platform=x11` on all Linux packaging formats. To force a different backend, pass `--ozone-platform=wayland` as a command-line argument when launching the app, or edit the `Exec=` line in your `.desktop` file. See [Troubleshooting: Wayland / Display Issues](troubleshooting.md#wayland--display-issues) for details.
 
 #### Custom Feature Flags (enable-features / disable-features)
 
@@ -729,8 +1039,10 @@ To use the incoming call command feature, a command or executable needs to be co
 
 ```json
 {
-  "incomingCallCommand": "/home/user/incomingCallScript.sh",
-  "incomingCallCommandArgs": ["-f", "1234"]
+  "incomingCalls": {
+    "command": "/home/user/incomingCallScript.sh",
+    "commandArgs": ["-f", "1234"]
+  }
 }
 ```
 
@@ -863,10 +1175,12 @@ System-wide keyboard shortcuts that work even when Teams is not focused. When tr
 
 ```json
 {
-  "globalShortcuts": [
-    "Control+Shift+M",
-    "Control+Shift+O"
-  ]
+  "shortcuts": {
+    "global": [
+      "Control+Shift+M",
+      "Control+Shift+O"
+    ]
+  }
 }
 ```
 

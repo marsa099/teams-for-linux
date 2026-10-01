@@ -103,15 +103,31 @@ class GraphApiClient {
 
       logger.debug('[GRAPH_API] Making request', { method, endpoint: url });
 
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Authorization': `Bearer ${tokenResult.token}`,
-          'Content-Type': 'application/json',
-          ...options.headers
-        },
-        ...(options.body && { body: JSON.stringify(options.body) })
-      });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
+
+      let response;
+      try {
+        response = await fetch(url, {
+          method,
+          headers: {
+            'Authorization': `Bearer ${tokenResult.token}`,
+            'Content-Type': 'application/json',
+            ...options.headers
+          },
+          ...(options.body && { body: JSON.stringify(options.body) }),
+          signal: controller.signal
+        });
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          logger.error('[GRAPH_API] Request timed out', { endpoint: url });
+          return { success: false, error: 'Request timed out' };
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+      }
+
       const responseText = await response.text();
 
       let data = null;
@@ -429,13 +445,11 @@ class GraphApiClient {
         return { success: false, error: 'Graph API is disabled' };
       }
 
-      // Resolve conversation
       const conversationResult = await this.resolveConversation(contactInfo.userId);
       if (!conversationResult.success) {
         return conversationResult;
       }
 
-      // Send message via Graph API
       return await this.sendChatMessage(conversationResult.conversationId, content);
     } catch (error) {
       logger.error('[GRAPH_API] sendChatMessageToUser error:', error);

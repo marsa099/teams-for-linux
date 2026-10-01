@@ -24,9 +24,15 @@ For a custom configuration, drop a JSON file at `~/.config/teams-for-linux/confi
 
 ```json
 {
-  "closeAppOnCross": false,
-  "followSystemTheme": true,
-  "trayIconEnabled": true
+  "window": {
+    "closeOnCross": false
+  },
+  "appearance": {
+    "followSystemTheme": true
+  },
+  "tray": {
+    "enabled": true
+  }
 }
 ```
 
@@ -45,6 +51,7 @@ User-facing topics:
 - [Intune SSO](intune-sso.md) — Microsoft Identity Broker integration
 - [MQTT integration](mqtt-integration.md) — publish presence and call status to a broker
 - [Troubleshooting](troubleshooting.md) — diagnostics for common Linux desktop issues
+- [Privacy & data protection](privacy.md) — what personal data the app does and does not handle
 
 ## Contributing
 
@@ -58,5 +65,4 @@ If you want to fix a bug or add a feature:
 ## Community
 
 - [GitHub Issues](https://github.com/IsmaelMartinez/teams-for-linux/issues) — bug reports and feature requests
-- [GitHub Discussions](https://github.com/IsmaelMartinez/teams-for-linux/discussions) — questions and conversation
 - [Matrix space](https://matrix.to/#/#teams-for-linux-space:matrix.org) — chat with users and contributors

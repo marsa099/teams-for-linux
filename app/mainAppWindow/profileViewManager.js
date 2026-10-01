@@ -1,7 +1,19 @@
-const { WebContentsView, session } = require("electron");
+const { WebContentsView, session, ipcMain } = require("electron");
 const path = require("node:path");
+const SenderProfileMap = require("./senderProfileMap");
 
 const LEGACY_PARTITION = "persist:teams-4-linux";
+
+// The switcher renders as a small avatar pill anchored in the BOTTOM-LEFT
+// corner (Teams' left rail is empty there, so nothing is covered — unlike the
+// top band which holds global search / back-forward / the account menu, #2661).
+// At rest the WebContentsView is just this square in the corner; profile views
+// are never inset. Exported for the e2e bounds assertions.
+const SWITCHER_PILL_SIZE = 56;
+
+// When the pill's dropdown is open the view grows to cover the FULL content
+// area so its scrim dims the whole app (a click anywhere outside the dropdown
+// dismisses it) and the dropdown — anchored above the pill — is not clipped.
 
 // Hostnames the bootstrap-on-navigate listener treats as "Teams was
 // successfully reached" — i.e. the post-login destinations. We
@@ -69,40 +81,119 @@ class ProfileViewManager {
   #window;
   #profilesManager;
   #config;
+  #bindDisplayMediaHandler;
+  #bindWindowOpenHandler;
+  #onViewDidFinishLoad;
   #views = new Map();
+  // Phase 2 foundation: webContents → profile attribution for main-process
+  // IPC handlers (tray/badge/notification aggregation consumes this next).
+  #registry;
+  // profileId → { wcId, partition }, captured at view creation so teardown
+  // never depends on the WebContents still being reachable (a page can
+  // destroy its own webContents, e.g. an auth flow calling window.close()).
+  #viewMeta = new Map();
+  // profileId → Map<webContents.id, webContents> of live popups / webview
+  // guests spawned by that profile's view (recursively). Drained — and the
+  // windows closed — when the profile is removed, so no surface keeps running
+  // an account the user just deleted, and no id resolves to a gone profile.
+  #descendants = new Map();
   #handlers = null;
   #resizeHandler = null;
   #navigationHandler = null;
   #bootstrapInFlight = false;
   #initialized = false;
+  // The switcher pill (a single persistent WebContentsView held separately from
+  // #views so #hideAllOverlays never detaches it).
+  #chromeView = null;
+  #chromeExpanded = false; // dropdown open (transient)
+  #setExpandedHandler = null;
 
   /**
    * @param {Electron.BrowserWindow} window  Main app window
    * @param {ProfilesManager} profilesManager
    * @param {object} config  Loaded app config (need `chromeUserAgent`,
    *                         `url`, and config gate `multiAccount.enabled`)
+   * @param {(session: Electron.Session) => void} bindDisplayMediaHandler
+   *   Binds the in-app screen-share picker to a session. Called for each
+   *   profile view's partition session so multi-account screen-share
+   *   matches Profile 0's behaviour (#2529).
+   * @param {(target: Electron.WebContents, loadTarget: Electron.WebContents, activate: () => void) => void} [bindWindowOpenHandler]
+   *   Installs the profile-view window-open policy on `target` (a profile
+   *   view or one of its descendants); Teams deep links load into
+   *   `loadTarget`, the originating profile view, and `activate` then makes
+   *   that profile the visible one. Profile views previously had no handler
+   *   at all; see mainAppWindow/profileWindowOpenPolicy.js.
+   * @param {(webContents: Electron.WebContents) => void} [onViewDidFinishLoad]
+   *   Called on every `did-finish-load` of each profile view, mirroring the
+   *   root window's listener. Main uses it to inject the screen-sharing
+   *   script, which otherwise only reaches Profile 0 (#2979).
    */
-  constructor(window, profilesManager, config) {
+  constructor(
+    window,
+    profilesManager,
+    config,
+    bindDisplayMediaHandler,
+    bindWindowOpenHandler = () => {},
+    onViewDidFinishLoad = () => {}
+  ) {
     this.#window = window;
     this.#profilesManager = profilesManager;
     this.#config = config;
+    this.#bindDisplayMediaHandler = bindDisplayMediaHandler;
+    this.#bindWindowOpenHandler = bindWindowOpenHandler;
+    this.#onViewDidFinishLoad = onViewDidFinishLoad;
+    this.#registry = new SenderProfileMap(profilesManager);
   }
 
   initialize() {
     if (this.#initialized) return;
     this.#initialized = true;
 
+    // The root window hosts Profile 0 (legacy partition). Its popups and
+    // webview guests attribute to whatever Profile 0 is at lookup time.
+    this.#registry.setRootWebContentsId(this.#window.webContents.id);
+    this.#watchDescendants(this.#window.webContents, {
+      root: true,
+      loadTarget: this.#window.webContents,
+      activate: () => this.#activate(this.#profilesManager.getLegacyProfile()?.id),
+    });
+    // Seed the cached root profile id; afterwards the add/remove handlers
+    // keep it current, so resolution never touches the settings store
+    // (electron-store re-reads its JSON file on every access — too costly
+    // for the per-badge-tick hot path Phase 2 puts lookups on).
+    this.#registry.setRootProfileId(
+      this.#profilesManager.getLegacyProfile()?.id ?? null
+    );
+
     this.#handlers = {
       add: (profile) => this.#onAdd(profile),
+      update: () => this.#pushSwitcherState(),
       switch: (profile) => this.#onSwitch(profile),
       remove: (result) => this.#onRemove(result),
     };
     this.#profilesManager.on("add", this.#handlers.add);
+    this.#profilesManager.on("update", this.#handlers.update);
     this.#profilesManager.on("switch", this.#handlers.switch);
     this.#profilesManager.on("remove", this.#handlers.remove);
 
     this.#resizeHandler = () => this.#applyBoundsToAll();
     this.#window.on("resize", this.#resizeHandler);
+
+    // Only act on events from our own pill's webContents. Returns once the
+    // bounds are applied so the renderer can await before revealing the
+    // dropdown (avoids a first-open clip while the view is still pill-sized).
+    this.#setExpandedHandler = (event, expanded) => {
+      if (!this.#chromeView || event.sender !== this.#chromeView.webContents) {
+        return;
+      }
+      this.#chromeExpanded = !!expanded;
+      this.#applyChromeBounds();
+      this.#raiseChrome();
+    };
+    // Grow the view to full-window while the dropdown is open (so the scrim
+    // covers the app and the dropdown isn't clipped), shrink back to the
+    // corner pill on close; the renderer toggles this on dropdown open/close.
+    ipcMain.handle("profile-switcher-set-expanded", this.#setExpandedHandler);
 
     // Bootstrap-on-navigate: a fresh-install user launches with the
     // legacy partition empty, so the startup bootstrap sees no cookies
@@ -150,6 +241,11 @@ class ProfileViewManager {
 
     const active = this.#profilesManager.getActive();
     if (active) this.#showActive(active);
+
+    // Create the switcher pill LAST so it sits above the active profile view.
+    // From here on, every #showActive re-raises it (adding a profile view
+    // would otherwise paint over it).
+    this.#createChromeView();
   }
 
   /**
@@ -229,9 +325,14 @@ class ProfileViewManager {
     if (!this.#initialized) return;
     if (this.#handlers) {
       this.#profilesManager.off("add", this.#handlers.add);
+      this.#profilesManager.off("update", this.#handlers.update);
       this.#profilesManager.off("switch", this.#handlers.switch);
       this.#profilesManager.off("remove", this.#handlers.remove);
       this.#handlers = null;
+    }
+    if (this.#setExpandedHandler) {
+      ipcMain.removeHandler("profile-switcher-set-expanded");
+      this.#setExpandedHandler = null;
     }
     if (this.#resizeHandler) {
       this.#window.removeListener("resize", this.#resizeHandler);
@@ -247,25 +348,79 @@ class ProfileViewManager {
     for (const profileId of this.#views.keys()) {
       this.#destroyView(profileId);
     }
+    if (this.#chromeView) {
+      try {
+        this.#window.contentView.removeChildView(this.#chromeView);
+      } catch {
+        // Already detached; ignore.
+      }
+      if (!this.#chromeView.webContents.isDestroyed()) {
+        this.#chromeView.webContents.close();
+      }
+      this.#chromeView = null;
+    }
+    this.#registry.clear();
+    this.#viewMeta.clear();
+    this.#descendants.clear();
     this.#initialized = false;
+  }
+
+  // --- Profile attribution (Phase 2 foundation) ------------------------
+
+  /**
+   * Resolve a webContents to the id of the profile that owns it: a profile
+   * view, the root window's Profile 0, or any popup / webview guest either
+   * of them spawned (tracked recursively). Returns null for unattributed
+   * senders: the switcher pill, dialog windows, and the root window or its
+   * descendants while Profile 0 does not exist (pre-bootstrap, or after its
+   * removal). Null means "unattributed", never "safe to ignore".
+   * @param {Electron.WebContents} webContents
+   * @returns {string|null}
+   */
+  resolveProfileId(webContents) {
+    if (!webContents || typeof webContents.id !== "number") return null;
+    return this.#registry.resolveProfileId(webContents.id);
+  }
+
+  /**
+   * Resolve an IPC event straight to the sender's full profile record.
+   * Null under the same contract as {@link resolveProfileId}, plus when the
+   * mapped profile record no longer exists in the store.
+   * @param {Electron.IpcMainEvent|Electron.IpcMainInvokeEvent} event
+   * @returns {object|null}
+   */
+  getProfileFor(event) {
+    return this.#registry.getProfileFor(event);
   }
 
   // --- Event handlers --------------------------------------------------
 
   #onAdd(profile) {
+    // Profile 0 (legacy partition) lives on the root window; no overlay
+    // needed — but its arrival (first-run bootstrap) is what makes root-
+    // window senders attributable. Other profiles get a WebContentsView.
+    // Either way the pill must re-render to show the new profile.
     if (profile.partition === LEGACY_PARTITION) {
-      // Profile 0 lives on the root window; no overlay needed.
-      return;
+      this.#registry.setRootProfileId(profile.id);
+    } else {
+      this.#createView(profile);
     }
-    this.#createView(profile);
+    this.#pushSwitcherState();
   }
 
   #onSwitch(profile) {
     this.#showActive(profile);
+    this.#pushSwitcherState();
   }
 
   #onRemove({ removedId, activeId }) {
     this.#destroyView(removedId);
+    // Re-derive the cached root profile id: removing Profile 0 must make
+    // root-window senders unattributed again. One settings read on a rare
+    // event, keeping the lookup path I/O-free.
+    this.#registry.setRootProfileId(
+      this.#profilesManager.getLegacyProfile()?.id ?? null
+    );
     if (activeId) {
       const next = this.#profilesManager
         .list()
@@ -273,7 +428,9 @@ class ProfileViewManager {
       if (next) this.#showActive(next);
     } else {
       this.#hideAllOverlays();
+      this.#raiseChrome();
     }
+    this.#pushSwitcherState();
   }
 
   // --- View lifecycle --------------------------------------------------
@@ -295,7 +452,47 @@ class ProfileViewManager {
       },
     });
 
-    this.#views.set(profile.id, view);
+    // Rebind the in-app screen-share picker on this profile's session.
+    // `setDisplayMediaRequestHandler` is per-session and the root window's
+    // binding does not carry across to profile partitions (#2529).
+    this.#bindDisplayMediaHandler(view.webContents.session);
+    this.#bindWindowOpenHandler(view.webContents, view.webContents, () =>
+      this.#activate(profileId)
+    );
+    // The root window injects the screen-sharing script on every
+    // did-finish-load of its own webContents; profile views need the same,
+    // or a share from a second profile runs with Teams' raw constraints
+    // (audio kept, no preview relay) (#2979).
+    view.webContents.on("did-finish-load", () =>
+      this.#onViewDidFinishLoad(view.webContents)
+    );
+
+    const wcId = view.webContents.id;
+    const profileId = profile.id;
+    this.#views.set(profileId, view);
+    this.#viewMeta.set(profileId, { wcId, partition: profile.partition });
+    this.#registry.register(wcId, profileId);
+    // Full symmetric cleanup when the webContents dies outside profile
+    // removal (a page can destroy its own webContents): drop the view AND
+    // the attribution mapping, so a later remove/dispose of this profile
+    // doesn't tear down through a dead view. Idempotent with #destroyView.
+    // #viewMeta is deliberately retained: the profile record still exists,
+    // and a later remove must clear the partition's storage (ADR-020 remove
+    // contract) even though the view is gone.
+    view.webContents.once("destroyed", () => {
+      this.#views.delete(profileId);
+      this.#registry.unregister(wcId);
+      this.#teardownDescendants(profileId);
+    });
+    // Attribute anything this view spawns to its profile. A popup genuinely
+    // shares the view's partition and preload (window.open inherits them from
+    // the opener); a <webview> guest has its own, but it lives inside this
+    // profile's surface, so its IPC still belongs to this profile.
+    this.#watchDescendants(view.webContents, {
+      profileId,
+      loadTarget: view.webContents,
+      activate: () => this.#activate(profileId),
+    });
     this.#applyBounds(view);
 
     const url = profile.url || this.#config.url;
@@ -304,40 +501,134 @@ class ProfileViewManager {
     });
   }
 
-  #destroyView(profileId) {
-    const view = this.#views.get(profileId);
-    if (!view) return;
-    this.#views.delete(profileId);
-
+  // Make `profileId` the visible profile (no-op if it already is, or if it
+  // no longer exists). Used when a deep link loads into a profile view that
+  // may currently be in the background.
+  #activate(profileId) {
+    if (!profileId) return;
+    if (this.#profilesManager.getActive()?.id === profileId) return;
     try {
-      this.#window.contentView.removeChildView(view);
-    } catch {
-      // View may not be currently attached; ignore.
+      this.#profilesManager.switch(profileId);
+    } catch (error) {
+      console.warn("[ProfileViewManager] activate after deep link failed", {
+        message: error.message,
+      });
+    }
+  }
+
+  // Listen for popups and webview guests spawned by `webContents` and
+  // attribute them to the same owner. `owner` is { profileId } for a profile
+  // view or { root: true } for the root window (Profile 0, whose id is
+  // mutable so descendants resolve through the map's root profile id).
+  #watchDescendants(webContents, owner) {
+    webContents.on("did-create-window", (child) =>
+      this.#trackDescendant(child?.webContents, owner)
+    );
+    webContents.on("did-attach-webview", (_event, guest) =>
+      this.#trackDescendant(guest, owner)
+    );
+  }
+
+  // Attribute a child window / webview guest to its owner for its lifetime,
+  // give it the same window-open policy (deep links still load into the
+  // ORIGINATING view, not the popup), and recurse so grandchildren are
+  // covered — `setWindowOpenHandler` and these events are per-webContents,
+  // not inherited. Id captured up front — same reasoning as the view itself.
+  #trackDescendant(webContents, owner) {
+    if (!webContents || typeof webContents.id !== "number") return;
+    const id = webContents.id;
+    if (owner.root) {
+      this.#registry.registerRootDescendant(id);
+      webContents.once("destroyed", () =>
+        this.#registry.unregisterRootDescendant(id)
+      );
+    } else {
+      this.#registry.register(id, owner.profileId);
+      let siblings = this.#descendants.get(owner.profileId);
+      if (!siblings) {
+        siblings = new Map();
+        this.#descendants.set(owner.profileId, siblings);
+      }
+      siblings.set(id, webContents);
+      webContents.once("destroyed", () => {
+        this.#registry.unregister(id);
+        this.#descendants.get(owner.profileId)?.delete(id);
+      });
+    }
+    this.#bindWindowOpenHandler(webContents, owner.loadTarget, owner.activate);
+    this.#watchDescendants(webContents, owner);
+  }
+
+  // Remove a profile's descendants from attribution and close any that are
+  // still alive: a popup left running after its profile is removed would keep
+  // an authenticated surface for a deleted account (and its partition is
+  // about to be cleared underneath it).
+  #teardownDescendants(profileId) {
+    const siblings = this.#descendants.get(profileId);
+    if (!siblings) return;
+    this.#descendants.delete(profileId);
+    for (const [id, wc] of siblings) {
+      this.#registry.unregister(id);
+      if (wc && !wc.isDestroyed?.()) {
+        try {
+          wc.close();
+        } catch {
+          // Already going away; ignore.
+        }
+      }
+    }
+  }
+
+  #destroyView(profileId) {
+    // Keyed on the creation-time meta, not the live view: if the view's
+    // webContents destroyed itself earlier (see #createView), the view entry
+    // is already gone but the removal contract below must still run.
+    const view = this.#views.get(profileId);
+    const meta = this.#viewMeta.get(profileId);
+    this.#views.delete(profileId);
+    this.#viewMeta.delete(profileId);
+    if (!view && !meta) return;
+    if (meta) this.#registry.unregister(meta.wcId);
+    this.#teardownDescendants(profileId);
+
+    if (view) {
+      try {
+        this.#window.contentView.removeChildView(view);
+      } catch {
+        // View may not be currently attached; ignore.
+      }
     }
 
     // Clear the partition's storage so a re-added profile with the same
     // name does not see the previous tenant's data. ADR-020 § "Remove a
     // profile" requires this destructive clear; UI confirmation is the
-    // caller's responsibility (Phase 1c.2 dialog).
-    const partitionSession = view.webContents.session;
-    partitionSession
-      .clearStorageData()
-      .catch((error) =>
-        console.warn(
-          "[ProfileViewManager] clearStorageData failed",
-          { profileId, message: error.message }
-        )
-      );
+    // caller's responsibility (Phase 1c.2 dialog). Resolved from the cached
+    // partition string, never through the view's webContents — that may be
+    // gone if the page destroyed it.
+    if (meta?.partition) {
+      session
+        .fromPartition(meta.partition)
+        .clearStorageData()
+        .catch((error) =>
+          console.warn(
+            "[ProfileViewManager] clearStorageData failed",
+            { profileId, message: error.message }
+          )
+        );
+    }
 
-    if (!view.webContents.isDestroyed()) {
-      view.webContents.close();
+    const wc = view?.webContents;
+    if (wc && !wc.isDestroyed()) {
+      wc.close();
     }
   }
 
   #showActive(profile) {
     if (profile.partition === LEGACY_PARTITION) {
-      // Profile 0 is the root window; just hide all overlays.
+      // Profile 0 is the root window; just hide all overlays. The pill
+      // stays put (it's not in #views) and is re-raised below.
       this.#hideAllOverlays();
+      this.#raiseChrome();
       return;
     }
     this.#hideAllOverlays();
@@ -347,10 +638,14 @@ class ProfileViewManager {
         "[ProfileViewManager] No view for active profile; nothing to show",
         { profileId: profile.id }
       );
+      this.#raiseChrome();
       return;
     }
     this.#applyBounds(view);
     this.#window.contentView.addChildView(view);
+    // Adding the profile view puts it on top; re-raise the pill so it stays
+    // above the active content.
+    this.#raiseChrome();
   }
 
   #hideAllOverlays() {
@@ -367,12 +662,91 @@ class ProfileViewManager {
 
   #applyBoundsToAll() {
     for (const view of this.#views.values()) this.#applyBounds(view);
+    this.#applyChromeBounds();
   }
 
   #applyBounds(view) {
+    // Profile views fill the whole content area — the switcher is a small
+    // bottom-left pill overlay, so nothing is inset.
     const [width, height] = this.#window.getContentSize();
     view.setBounds({ x: 0, y: 0, width, height });
+  }
+
+  // --- Switcher pill ---------------------------------------------------
+
+  #createChromeView() {
+    // The pill renders our own vanilla HTML/CSS and never touches Teams'
+    // DOM, so it can be fully hardened (contextIsolation + sandbox), unlike
+    // the profile views which need ReactHandler access.
+    const view = new WebContentsView({
+      webPreferences: {
+        preload: path.join(__dirname, "..", "profileSwitcher", "preload.js"),
+        contextIsolation: true,
+        sandbox: true,
+        nodeIntegration: false,
+      },
+    });
+    this.#chromeView = view;
+    // Transparent so only the pill (and, while open, the scrim + dropdown)
+    // paint; the rest of the view lets the Teams content show through.
+    view.setBackgroundColor("#00000000");
+    this.#applyChromeBounds();
+    this.#window.contentView.addChildView(view);
+    view.webContents.loadFile(
+      path.join(__dirname, "..", "profileSwitcher", "switcher.html")
+    );
+    // Push the initial profile state once the renderer is ready. The renderer
+    // also pulls state itself on load (via profile-list / profile-get-active),
+    // so this is belt-and-suspenders against push/load ordering.
+    view.webContents.once("did-finish-load", () => this.#pushSwitcherState());
+  }
+
+  #applyChromeBounds() {
+    if (!this.#chromeView) return;
+    const [width, height] = this.#window.getContentSize();
+    // Dropdown open: cover the whole content area (full-app scrim +
+    // click-anywhere dismiss; the upward dropdown is not clipped).
+    if (this.#chromeExpanded) {
+      this.#chromeView.setBounds({ x: 0, y: 0, width, height });
+      return;
+    }
+    // At rest: a small square flush to the window's bottom-left corner. The
+    // pill itself is drawn a few px inside it (see switcher.css).
+    const size = Math.min(SWITCHER_PILL_SIZE, width, height);
+    this.#chromeView.setBounds({
+      x: 0,
+      y: Math.max(0, height - size),
+      width: size,
+      height: size,
+    });
+  }
+
+  // Re-assert the pill as the topmost child. addChildView on an already
+  // attached view moves it to the top of the z-order.
+  #raiseChrome() {
+    if (!this.#chromeView) return;
+    try {
+      this.#window.contentView.addChildView(this.#chromeView);
+    } catch {
+      // View may be mid-teardown; ignore.
+    }
+  }
+
+  #pushSwitcherState() {
+    if (!this.#chromeView || this.#chromeView.webContents.isDestroyed()) {
+      return;
+    }
+    const active = this.#profilesManager.getActive();
+    this.#chromeView.webContents.send("profile-switcher-state", {
+      profiles: this.#profilesManager.list(),
+      activeId: active ? active.id : null,
+      // The Ctrl+Alt+1…5 pinned-profile chords live on the per-window menu
+      // (win.setMenu), which does not exist on macOS — don't advertise a
+      // shortcut that can never fire there.
+      shortcutsAvailable: process.platform !== "darwin",
+    });
   }
 }
 
 module.exports = ProfileViewManager;
+module.exports.SWITCHER_PILL_SIZE = SWITCHER_PILL_SIZE;

@@ -117,7 +117,7 @@ ignored. The examples below use whichever spelling actually applies.
 |--------|------|---------|-------------|
 | `app.url` | `string` | `"https://teams.cloud.microsoft"` | Microsoft Teams URL |
 | `url` | `string` | `"https://teams.cloud.microsoft"` | Deprecated, use `app.url` |
-| `app.title` | `string` | `"Microsoft Teams"` | Text to be suffixed with page title |
+| `app.title` | `string` | `"Microsoft Teams"` | Replaces 'Microsoft Teams' in the window title (when changed from the default) and is used as the tray tooltip |
 | `appTitle` | `string` | `"Microsoft Teams"` | Deprecated, use `app.title` |
 | `app.partition` | `string` | `"persist:teams-4-linux"` | BrowserWindow webpreferences partition |
 | `partition` | `string` | `"persist:teams-4-linux"` | Deprecated, use `app.partition` |
@@ -409,7 +409,7 @@ Requires the `fido2-tools` system package: `sudo apt install fido2-tools` (Debia
 | `auth.webauthn.debug` | `boolean` | `false` | Enable verbose WebAuthn diagnostic logging (useful for beta testers troubleshooting key registration) |
 | `auth.webauthn.extraOrigins` | `array` | `[]` | Extra sign-in origins allowed to use hardware keys, in addition to the built-in Microsoft login origins |
 
-Interception is limited to the Microsoft login origins (`https://login.microsoftonline.com`, `https://login.microsoft.com`, `https://login.live.com`). If your tenant is federated and the key prompt is served by your own identity provider, the ceremony is blocked and the log shows `[WEBAUTHN] Blocked request { reason: 'origin-not-allowed' }`. Add that origin to `auth.webauthn.extraOrigins` and restart:
+Interception is limited to the Microsoft login origins (`https://login.microsoftonline.com`, `https://login.microsoft.com`, `https://login.live.com`). If your tenant is federated and the key prompt is served by your own identity provider, the ceremony is blocked and the log shows `[WEBAUTHN] Blocked request { reason: 'origin-not-allowed' }`, or, when the identity provider runs in an embedded frame, `[WEBAUTHN] Skipped a subframe outside the login allowlist` and no key prompt at all. The log never names the origin, since it identifies your tenant. To find it, sign in at teams.microsoft.com in a regular browser with its developer tools open, and note the scheme and host of the request that loads the page asking for your key (the address bar shows only the outer page when that step is embedded). Add that origin to `auth.webauthn.extraOrigins` and restart:
 
 ```json
 {
@@ -700,9 +700,10 @@ When MQTT is enabled, the following topics are automatically published:
 | `\{topicPrefix\}/camera` | `"true"` or `"false"` | Camera on/off state (monitors video sender track via WebRTC, filters out screen-sharing tracks) |
 | `\{topicPrefix\}/microphone` | `"speaking"` \| `"silent"` \| `"muted"` \| `"off"` | Microphone state derived from the WebRTC speaking-indicator. `speaking` = audio is being transmitted, `silent` = mic open but quiet, `muted` = Teams has zeroed the audio signal, `off` = not in a call. Activates when `mqtt.enabled` is true (no separate toggle required). |
 | `\{topicPrefix\}/incoming-call` | `"true"` or `"false"` | Incoming call ringing state. Fires before user accepts. Parity with `incomingCallCommand`. Covers 1:1 ring-type calls, calls from phone numbers, and call-queue calls. |
+| `\{topicPrefix\}/incoming-call/caller` | JSON object | Who is calling while `incoming-call` is `"true"`: `scenario`, and where known `number`, `name`, `queue`, `contact` and `callId`, and a `timestamp` and `clientId`. Published just before `incoming-call` goes `"true"`, and again if Teams fills the details in while ringing. Not retained. Off unless `mqtt.incomingCallCaller.enabled` is `true`. |
 | `\{topicPrefix\}/screen-sharing` | `"true"` or `"false"` | Screen sharing active state |
 
-All topics use retained messages by default, ensuring subscribers receive the last known state immediately upon connecting.
+All topics except `incoming-call/caller` use retained messages, ensuring subscribers receive the last known state immediately upon connecting.
 
 **Connection State:** The `connected` topic uses MQTT Last Will and Testament (LWT). If the app crashes or loses network connectivity, the broker automatically publishes `"false"`, allowing home automation to detect and handle stale state.
 

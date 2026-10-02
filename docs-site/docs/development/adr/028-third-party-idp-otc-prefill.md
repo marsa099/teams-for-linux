@@ -54,7 +54,7 @@ cannot host one.
 
 Per [Electron's extension documentation](https://www.electronjs.org/docs/latest/api/extensions),
 the supported `chrome.*` surface does not include `chrome.runtime.connectNative`. Native messaging
-is exactly how 1Password, KeePassXC and Bitwarden's desktop integration reach a local vault, so the
+is how desktop password-manager integrations reach a local vault, so the
 extensions cannot talk to the app that holds the secrets. Electron additionally loads only unpacked
 extensions (no `.crx`), supports only `chrome.storage.local`, and has no concept of popups or
 extension actions, so there would be no toolbar UI either.

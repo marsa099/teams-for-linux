@@ -1389,8 +1389,19 @@ function onNewWindow(details) {
   return secureOpenLink(details);
 }
 
-function onPageTitleUpdated(_event, title) {
+function onPageTitleUpdated(event, title) {
   window.webContents.send("page-title", title);
+  // A custom app.title replaces the trailing "Microsoft Teams" in the window
+  // title (or is appended when Teams omits it) so multiple instances can be
+  // told apart in taskbars and Alt+Tab (#3035). The default leaves Electron
+  // mirroring document.title untouched.
+  const defaultTitle = "Microsoft Teams";
+  if (config.appTitle && config.appTitle !== defaultTitle) {
+    event.preventDefault();
+    window.setTitle(title.endsWith(defaultTitle)
+      ? title.slice(0, -defaultTitle.length) + config.appTitle
+      : `${title} - ${config.appTitle}`);
+  }
 }
 
 function onNavigationChanged() {
@@ -1543,7 +1554,18 @@ function secureOpenLink(details) {
 
 function openInBrowser(details) {
   if (config.defaultURLHandler.trim() === "") {
-    shell.openExternal(details.url);
+    // A scheme with no handling app rejects; uncaught, that reaches the
+    // process-wide unhandledRejection handler and exits the app.
+    // Only the scheme is logged: the OS error message can echo the URL.
+    shell.openExternal(details.url).catch(() => {
+      let scheme = "unparseable";
+      try {
+        scheme = new URL(details.url).protocol;
+      } catch {
+        // keep "unparseable"
+      }
+      console.error("[LINK] Could not open link externally", { scheme });
+    });
   } else {
     execFile(
       config.defaultURLHandler.trim(),

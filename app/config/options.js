@@ -96,7 +96,7 @@ module.exports = {
       },
       appTitle: {
         default: "Microsoft Teams",
-        describe: "A text to be suffixed with page title",
+        describe: "Replaces 'Microsoft Teams' in the window title (when changed from the default) and is used as the tray tooltip",
         type: "string",
         applyMode: "restart",
         deprecated: "use app.title instead",
@@ -861,6 +861,9 @@ module.exports = {
             microphoneControl: "microphone/control",
             screenSharing: "screen-sharing",
           },
+          incomingCallCaller: {
+            enabled: false,
+          },
           meetingStartDetection: {
             enabled: false,
             patterns: ["meeting started", "started the meeting"],
@@ -923,6 +926,11 @@ module.exports = {
           "homeAssistant.deviceName": {
             type: "string",
             describe: "Device name shown in Home Assistant.",
+          },
+          "incomingCallCaller.enabled": {
+            type: "boolean",
+            describe:
+              "Publish the ringing call's caller (name, number, call queue) as JSON to the incoming-call/caller topic. Off by default because it sends callers' personal details to the broker.",
           },
           "meetingStartDetection.enabled": {
             type: "boolean",
@@ -1306,7 +1314,7 @@ module.exports = {
         fields: {
           "title": {
             type: "string",
-            describe: "A text to be suffixed with page title",
+            describe: "Replaces 'Microsoft Teams' in the window title (when changed from the default) and is used as the tray tooltip",
           },
           "url": {
             type: "string",

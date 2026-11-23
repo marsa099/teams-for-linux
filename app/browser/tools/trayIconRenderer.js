@@ -146,20 +146,21 @@ class TrayIconRenderer {
 
     ctx.drawImage(image, 0, 0, 140, 140);
     if (newActivityCount > 0 && !this.config.disableBadgeCount) {
-      ctx.fillStyle = "red";
+      // Counter badge tucked into the bottom-right corner.
+      const cx = 106, cy = 106, r = 34;
+      ctx.fillStyle = "#E5484D";
       ctx.beginPath();
-      ctx.ellipse(100, 90, 40, 40, 40, 0, 2 * Math.PI);
+      ctx.arc(cx, cy, r, 0, 2 * Math.PI);
       ctx.fill();
       ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
       ctx.fillStyle = "white";
 
+      const label = newActivityCount > 9 ? "9+" : newActivityCount.toString();
+      const size = label.length > 1 ? 40 : 54;
       ctx.font =
-        'bold 70px "Segoe UI","Helvetica Neue",Helvetica,Arial,sans-serif';
-      if (newActivityCount > 9) {
-        ctx.fillText("+", 100, 110);
-      } else {
-        ctx.fillText(newActivityCount.toString(), 100, 110);
-      }
+        `bold ${size}px "Segoe UI","Helvetica Neue",Helvetica,Arial,sans-serif`;
+      ctx.fillText(label, cx, cy + 2);
     }
     const resizedCanvas = this._getResizeCanvasWithOriginalIconSize(canvas);
     resolve(resizedCanvas.toDataURL());

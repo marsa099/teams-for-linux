@@ -1,4 +1,4 @@
-const { ipcMain, net, powerMonitor } = require("electron");
+const { net, powerMonitor } = require("electron");
 
 // Debounce window for rapid network change events before refreshing
 const REFRESH_DEBOUNCE_MS = 1000;
@@ -17,6 +17,11 @@ let _ConnectionManager_boundDidFailLoad = new WeakMap();
 let _ConnectionManager_needsReload = new WeakMap();
 
 class ConnectionManager {
+  // Set once service workers have been cleared after an ERR_FAILED, so a failure
+  // that has some other cause cannot clear them on every retry. Not reset by
+  // start(): one clear per run is enough to replace a broken worker.
+  #clearedServiceWorkers = false;
+
   get window() {
     return _ConnectionManager_window.get(this);
   }
@@ -47,8 +52,6 @@ class ConnectionManager {
     _ConnectionManager_boundRefresh.set(this, boundRefresh);
     _ConnectionManager_boundDidFailLoad.set(this, boundDidFailLoad);
 
-    // Retry connection when user clicks retry button on offline page
-    ipcMain.on("offline-retry", boundRefresh);
     powerMonitor.on("resume", boundRefresh);
     this.window.webContents.on("did-fail-load", boundDidFailLoad);
 
@@ -60,7 +63,6 @@ class ConnectionManager {
     const boundDidFailLoad = _ConnectionManager_boundDidFailLoad.get(this);
 
     if (boundRefresh) {
-      ipcMain.removeListener("offline-retry", boundRefresh);
       powerMonitor.removeListener("resume", boundRefresh);
     }
 
@@ -164,10 +166,38 @@ class ConnectionManager {
         console.info(`[CONNECTION] Teams navigation finished in ${elapsedSeconds()}s`);
       }
     } catch (err) {
+      // Teams' launcher page (msteams:// call and chat links) redirects in the
+      // page, which rejects loadURL with ERR_ABORTED although the new page is
+      // loading. Retrying would reload over the redirect, dropping the link and
+      // leaving "Waiting for network..." as the title (#3152).
+      if (err.code === "ERR_ABORTED") {
+        console.info(`[CONNECTION] Teams redirected the initial load after ${elapsedSeconds()}s`);
+        return;
+      }
       console.error(`[CONNECTION] Failed to load page after ${elapsedSeconds()}s: ${err.message}`);
       _ConnectionManager_needsReload.set(this, true);
       this.debouncedRefresh();
     }
+  }
+
+  // A service worker saved by an earlier Teams session intercepts every
+  // navigation, so when it breaks, each load and reload fails with the generic
+  // ERR_FAILED and retrying only hands the request back to the same worker.
+  // Unregistering the workers once lets the next load reach the network, and
+  // Teams registers a fresh worker after it loads. Cookies, IndexedDB and local
+  // storage are kept, so the user stays signed in.
+  async clearServiceWorkersAndRetry() {
+    if (this.#clearedServiceWorkers) return;
+    this.#clearedServiceWorkers = true;
+    console.warn("[CONNECTION] Main frame failed with ERR_FAILED; clearing service workers and retrying");
+    try {
+      await this.window.webContents.session.clearStorageData({ storages: ["serviceworkers"] });
+    } catch (err) {
+      console.error(`[CONNECTION] Failed to clear service workers: ${err.message}`);
+      return;
+    }
+    _ConnectionManager_needsReload.set(this, true);
+    this.debouncedRefresh();
   }
 
   async isOnline() {
@@ -253,6 +283,8 @@ function assignOnDidFailLoadEventHandler(cm) {
         console.debug(`Network error detected: ${description}, scheduling debounced refresh...`);
         _ConnectionManager_needsReload.set(cm, true);
         cm.debouncedRefresh();
+      } else if (description === "ERR_FAILED") {
+        void cm.clearServiceWorkersAndRetry();
       }
     } else {
       // Sub-frame failures are expected in restricted networks (e.g. Teams

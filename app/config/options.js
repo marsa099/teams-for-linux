@@ -28,18 +28,43 @@
 const defaults = require("./defaults");
 
 module.exports = {
+      dbusControl: {
+        default: { enabled: false, busName: "", callParticipants: false },
+        describe: "Opt-in Linux user session D-Bus control and observed Teams state. Requires restart.",
+        type: "object",
+        fields: {
+          enabled: {
+            type: "boolean",
+            describe: "Enable the Linux D-Bus service and its local status monitors.",
+          },
+          busName: {
+            type: "string",
+            describe: "Well-known D-Bus service name for this instance. Empty uses FLATPAK_ID or com.github.IsmaelMartinez.teams_for_linux. Use distinct names for separately launched profiles; invalid names disable the service.",
+          },
+          callParticipants: {
+            type: "boolean",
+            describe: "Also publish the names of remote call participants on the stage and who is speaking (CallParticipantsChanged). Names are visible to every process on your session bus. Reads Teams call markup, which can change without notice (experimental).",
+          },
+        },
+        applyMode: "restart",
+      },
       appActiveCheckInterval: {
         default: 2,
         describe:
           "A numeric value in seconds as poll interval to check if the system is active from being idle",
         type: "number",
         applyMode: "restart",
+        deprecated: "use idleDetection.checkInterval.detectActive instead",
       },
       screenSharing: {
         default: {
           thumbnail: {
             enabled: true,
             alwaysOnTop: true,
+          },
+          resolution: {
+            enabled: false,
+            mode: "remove",
           },
           lockInhibitionMethod: "Electron",
         },
@@ -56,6 +81,25 @@ module.exports = {
             type: "boolean",
             describe: "Keep the screen sharing thumbnail window always on top.",
           },
+          "resolution.enabled": {
+            type: "boolean",
+            describe:
+              "Enable screen sharing resolution control. When false, Teams' resolution constraints are left unchanged.",
+          },
+          "resolution.mode": {
+            type: "string",
+            describe:
+              "Resolution mode: remove disables Teams' screen sharing limits so capture can use its native resolution; override requests the configured width and height as a ceiling.",
+            choices: ["remove", "override"],
+          },
+          "resolution.width": {
+            type: "number",
+            describe: "Target screen sharing width when mode is override; used with height as the maximum requested resolution.",
+          },
+          "resolution.height": {
+            type: "number",
+            describe: "Target screen sharing height when mode is override; used with width as the maximum requested resolution.",
+          },
           "lockInhibitionMethod": {
             type: "string",
             describe: "Screen lock inhibition method used while sharing.",
@@ -67,7 +111,7 @@ module.exports = {
       appIcon: {
         default: "",
         describe:
-          "Custom app icon (PNG) for the tray, the window icon on Windows and Linux, and the dock on macOS. Also settable from the App Icon menu",
+          "Custom app icon (PNG) for the tray, the window icon on Windows and Linux, and the dock on macOS. Also settable from the App Icon menu, which on Linux can also copy it into the user icon theme (~/.local/share/icons) so the taskbar and launcher follow; those files outlive the package and are not written under Snap or Flatpak",
         type: "string",
         applyMode: "live",
         deprecated: "use tray.icon instead",
@@ -86,6 +130,7 @@ module.exports = {
           "A numeric value in seconds as duration before app considers the system as idle",
         type: "number",
         applyMode: "restart",
+        deprecated: "use idleDetection.timeout instead",
       },
       appIdleTimeoutCheckInterval: {
         default: 10,
@@ -93,6 +138,7 @@ module.exports = {
           "A numeric value in seconds as poll interval to check if the appIdleTimeout is reached",
         type: "number",
         applyMode: "restart",
+        deprecated: "use idleDetection.checkInterval.detectIdle instead",
       },
       appTitle: {
         default: "Microsoft Teams",
@@ -113,21 +159,45 @@ module.exports = {
         describe: "Set auth-server-whitelist value",
         type: "string",
         applyMode: "restart",
+        deprecated: "use auth.serverWhitelist instead",
       },
       awayOnSystemIdle: {
         default: false,
         describe: "Sets the user status as away when system goes idle",
         type: "boolean",
         applyMode: "restart",
+        deprecated: "use idleDetection.setAwayOnIdle instead",
       },
       idleDetection: {
         default: {
           forceState: false,
           stateFile: "/tmp/teams-for-linux-idle-state-$USER",
+          setAwayOnIdle: false,
+          timeout: 300,
+          checkInterval: {
+            detectIdle: 10,
+            detectActive: 2,
+          },
         },
-        describe: "Idle detection configuration. forceState: enables state file-based idle control (workaround for Wayland/Hyprland). stateFile: path to state file with $USER expansion support.",
+        describe: "Idle detection configuration. forceState: enables state file-based idle control (workaround for Wayland/Hyprland). stateFile: path to state file with $USER expansion support. setAwayOnIdle, timeout and checkInterval replace the deprecated awayOnSystemIdle, appIdleTimeout, appIdleTimeoutCheckInterval and appActiveCheckInterval options.",
         type: "object",
         fields: {
+          "setAwayOnIdle": {
+            type: "boolean",
+            describe: "Sets the user status as away when system goes idle",
+          },
+          "timeout": {
+            type: "number",
+            describe: "A numeric value in seconds as duration before app considers the system as idle",
+          },
+          "checkInterval.detectIdle": {
+            type: "number",
+            describe: "Poll interval in seconds while active, watching for the system to go idle (when idleDetection.timeout is reached)",
+          },
+          "checkInterval.detectActive": {
+            type: "number",
+            describe: "Poll interval in seconds while idle, watching for the system to become active again",
+          },
           "forceState": {
             type: "boolean",
             describe:
@@ -169,11 +239,12 @@ module.exports = {
           "Array of custom CA Certs Fingerprints to allow SSL unrecognized signer or self signed certificate",
         type: "array",
         applyMode: "restart",
+        deprecated: "use auth.customCACertificateFingerprints instead",
       },
       customCSSName: {
         default: "",
         describe:
-          'custom CSS name for the packaged available css files. Currently those are: "compactDark", "compactLight", "tweaks", "condensedDark" and "condensedLight" ',
+          'Packaged CSS theme name (compactDark, compactLight, tweaks, condensedDark, condensedLight), or custom:<id> for a discovered user theme. An empty name uses customCSSLocation when configured.',
         type: "string",
         applyMode: "restart",
         deprecated: "use appearance.cssName instead",
@@ -292,6 +363,7 @@ module.exports = {
           "Custom Client Certs for corporate authentication (certificate must be in pkcs12 format)",
         type: "string",
         applyMode: "restart",
+        deprecated: "use auth.clientCertificate.path instead",
       },
       clientCertPassword: {
         default: "",
@@ -299,6 +371,7 @@ module.exports = {
           "Custom Client Certs password for corporate authentication (certificate must be in pkcs12 format)",
         type: "string",
         applyMode: "restart",
+        deprecated: "use auth.clientCertificate.password instead",
       },
       closeAppOnCross: {
         default: false,
@@ -313,6 +386,7 @@ module.exports = {
         type: "string",
         choices: ["low", "normal", "critical"],
         applyMode: "live",
+        deprecated: "use notifications.urgency instead",
       },
       defaultURLHandler: {
         default: "",
@@ -375,12 +449,14 @@ module.exports = {
         describe: "A flag to disable all notifications",
         type: "boolean",
         applyMode: "live",
+        deprecated: "use notifications.enabled instead",
       },
       disableNotificationSound: {
         default: false,
         describe: "Disable chat/meeting start notification sound",
         type: "boolean",
         applyMode: "live",
+        deprecated: "use notifications.sound.enabled instead",
       },
       disableNotificationSoundIfNotAvailable: {
         default: false,
@@ -388,6 +464,7 @@ module.exports = {
           "Disables notification sound unless status is Available (e.g. while in a call, busy, etc.)",
         type: "boolean",
         applyMode: "live",
+        deprecated: "use notifications.sound.onlyWhenAvailable instead",
       },
       disableNotificationWindowFlash: {
         default: false,
@@ -395,6 +472,7 @@ module.exports = {
           "A flag indicates whether to disable window flashing when there is a notification",
         type: "boolean",
         applyMode: "live",
+        deprecated: "use notifications.windowFlash instead",
       },
       notifications: {
         default: {
@@ -402,9 +480,20 @@ module.exports = {
           electron: {
             clickAction: "show",
           },
+          // Inverted renames (ADR-025): each default is the negation of its
+          // flat disable* default, so an untouched config behaves the same.
+          enabled: true,
+          sound: {
+            enabled: true,
+            onlyWhenAvailable: false,
+          },
+          windowFlash: true,
+          badgeCountEnabled: true,
+          method: "web",
+          urgency: "normal",
         },
         describe:
-          "Notification behaviour. timeoutType: how long notifications stay in the system notification center (Linux/Windows only). Choices: `default` (auto-clear per system policy) or `never` (persist until the user dismisses, useful on GNOME and other desktops that auto-remove notifications). Mirrors Electron's Notification timeoutType. May not be honoured by every notification daemon. electron.clickAction: what clicking a notification does when notificationMethod is `electron`. Choices: `show` (reveal the window and let Teams open the conversation the notification came from, the default), `restore` (also un-minimise and focus, which helps on GNOME where a plain show does not raise the window) or `none` (do nothing, and do not open the conversation either).",
+          "Notification behaviour. timeoutType: how long notifications stay in the system notification center (Linux/Windows only). Choices: `default` (auto-clear per system policy) or `never` (persist until the user dismisses, useful on GNOME and other desktops that auto-remove notifications). Mirrors Electron's Notification timeoutType. May not be honoured by every notification daemon. electron.clickAction: what clicking a notification does when notificationMethod is `electron`. Choices: `show` (reveal the window and let Teams open the conversation the notification came from, the default), `restore` (also un-minimise and focus, which helps on GNOME where a plain show does not raise the window) or `none` (do nothing, and do not open the conversation either). enabled, sound, windowFlash, badgeCountEnabled, method and urgency replace the deprecated disableNotifications, disableNotificationSound, disableNotificationSoundIfNotAvailable, disableNotificationWindowFlash, disableBadgeCount, notificationMethod and defaultNotificationUrgency options; the disable* booleans other than disableNotificationSoundIfNotAvailable are inverted, so `disableNotifications: true` becomes `enabled: false`.",
         type: "object",
         fields: {
           "timeoutType": {
@@ -419,6 +508,36 @@ module.exports = {
               "What clicking an Electron notification does (notificationMethod `electron` only): `show` reveals the window and lets Teams open the sending conversation (default), `restore` also un-minimises and focuses it (helps on GNOME), `none` does nothing at all.",
             choices: ["show", "restore", "none"],
           },
+          "enabled": {
+            type: "boolean",
+            describe: "Show notifications; set false to disable all notifications",
+          },
+          "sound.enabled": {
+            type: "boolean",
+            describe: "Play the chat/meeting start notification sound",
+          },
+          "sound.onlyWhenAvailable": {
+            type: "boolean",
+            describe: "Play the notification sound only while status is Available (not while in a call, busy, etc.)",
+          },
+          "windowFlash": {
+            type: "boolean",
+            describe: "Flash the window when there is a notification",
+          },
+          "badgeCountEnabled": {
+            type: "boolean",
+            describe: "Show the badge counter on the taskbar/dock icon",
+          },
+          "method": {
+            type: "string",
+            describe: "Notification method to be used by the application (web/electron/custom)",
+            choices: ["web", "electron", "custom"],
+          },
+          "urgency": {
+            type: "string",
+            describe: "Default urgency for new notifications (low/normal/critical)",
+            choices: ["low", "normal", "critical"],
+          },
         },
         applyMode: "restart",
       },
@@ -428,11 +547,12 @@ module.exports = {
           "A flag indicates whether to disable the badge counter on the taskbar/dock icon",
         type: "boolean",
         applyMode: "live",
+        deprecated: "use notifications.badgeCountEnabled instead",
       },
       disableGlobalShortcuts: {
         default: [],
         describe:
-          "Array of global shortcuts to disable while the app is in focus. See https://www.electronjs.org/docs/latest/api/accelerator for available accelerators to use",
+          "Array of global shortcuts to disable while the app is in focus. See https://www.electronjs.org/docs/latest/tutorial/keyboard-shortcuts#accelerators for available accelerators to use",
         type: "array",
         applyMode: "restart",
         deprecated: "use shortcuts.disableWhileFocused instead",
@@ -569,10 +689,21 @@ module.exports = {
         type: "string",
         choices: ["web", "electron", "custom"],
         applyMode: "restart",
+        deprecated: "use notifications.method instead",
       },
       customNotification: {
         default: {
           toastDuration: 5000,
+          width: 360,
+          height: 110,
+          position: "bottomRight",
+          margin: 0,
+          backgroundColor: "#2D2D2D",
+          hoverBackgroundColor: "#3A3A3A",
+          titleColor: "#FFFFFF",
+          textColor: "#D1D1D1",
+          titleFontSize: 14,
+          bodyFontSize: 13,
         },
         describe:
           "Custom in-app notification system configuration",
@@ -582,6 +713,49 @@ module.exports = {
             type: "number",
             describe:
               "Time in milliseconds before a custom toast notification auto-dismisses.",
+          },
+          "width": {
+            type: "number",
+            describe: "Toast width in pixels (200 to 1000).",
+          },
+          "height": {
+            type: "number",
+            describe:
+              "Toast height in pixels (80 to 600). A taller toast shows more lines of the message.",
+          },
+          "position": {
+            type: "string",
+            choices: ["bottomRight", "topRight", "bottomLeft", "topLeft"],
+            describe: "Screen corner the toast appears in.",
+          },
+          "margin": {
+            type: "number",
+            describe:
+              "Gap in pixels between the toast and the screen edges (0 to 500). Raise it if the toast covers a panel or dock.",
+          },
+          "backgroundColor": {
+            type: "string",
+            describe: "Toast background, any CSS colour (e.g. \"#5B5FC7\").",
+          },
+          "hoverBackgroundColor": {
+            type: "string",
+            describe: "Toast background while the pointer is over it, any CSS colour.",
+          },
+          "titleColor": {
+            type: "string",
+            describe: "Title text colour, any CSS colour.",
+          },
+          "textColor": {
+            type: "string",
+            describe: "Message text colour, any CSS colour.",
+          },
+          "titleFontSize": {
+            type: "number",
+            describe: "Title font size in pixels (8 to 40).",
+          },
+          "bodyFontSize": {
+            type: "number",
+            describe: "Message font size in pixels (8 to 40).",
           },
         },
         applyMode: "restart",
@@ -606,11 +780,13 @@ module.exports = {
         describe: "Proxy Server with format address:port",
         type: "string",
         applyMode: "restart",
+        deprecated: "use network.proxyServer instead",
       },
       network: {
 	default: {
 		webRTCIPHandlingPolicy: null,
 		disableQuic: true,
+		proxyServer: null,
 	},
       	describe:
 	  "Network configuration. " +
@@ -621,7 +797,8 @@ module.exports = {
     	  "Disabled by default (opt-in). " +
     	  "disableQuic: Append Chromium's --disable-quic switch at startup. Defaults to true to work around issue #2518 " +
     	  "(concurrent SharePoint downloads abort with ERR_QUIC_PROTOCOL_ERROR on the shared QUIC session). Set to false " +
-    	  "to re-enable QUIC if a future Chromium release fixes the underlying transport bug.",
+    	  "to re-enable QUIC if a future Chromium release fixes the underlying transport bug. " +
+    	  "proxyServer: proxy server with format address:port, replacing the deprecated proxyServer option.",
 	type: "object",
         fields: {
           "webRTCIPHandlingPolicy": {
@@ -640,6 +817,10 @@ module.exports = {
             describe:
               "Append Chromium's --disable-quic switch at startup to work around QUIC protocol errors (issue #2518).",
           },
+          "proxyServer": {
+            type: "string",
+            describe: "Proxy Server with format address:port",
+          },
         },
         applyMode: "restart",
       },
@@ -656,12 +837,14 @@ module.exports = {
         describe: "User to use for SSO basic auth.",
         type: "string",
         applyMode: "restart",
+        deprecated: "use auth.basic.user instead",
       },
       ssoBasicAuthPasswordCommand: {
         default: "",
         describe: "Command to execute to retrieve password for SSO basic auth.",
         type: "string",
         applyMode: "restart",
+        deprecated: "use auth.basic.passwordCommand instead",
       },
       trayIconEnabled: {
         default: true,
@@ -742,9 +925,10 @@ module.exports = {
           showStatusOnDockIcon: false,
           macPerformanceMode: true,
           preventDeviceSwitching: false,
+          documentPictureInPicture: true,
         },
         describe:
-          "Media settings for microphone, camera, and video. showStatusOnDockIcon: overlay the user presence status on the Dock icon on macOS. macPerformanceMode: on macOS, force-enable native hardware/rendering optimizations (Metal ANGLE, GPU rasterization, hardware WebRTC codecs) at startup; defaults to true, set false to opt out without disabling the GPU entirely. preventDeviceSwitching: prevent automatic audio/video device switching by blocking device change notifications.",
+          "Media settings for microphone, camera, and video. showStatusOnDockIcon: overlay the user presence status on the app icon (the Dock on macOS, the tray icon elsewhere). macPerformanceMode: on macOS, force-enable native hardware/rendering optimizations (Metal ANGLE, GPU rasterization, hardware WebRTC codecs) at startup; defaults to true, set false to opt out without disabling the GPU entirely. preventDeviceSwitching: prevent automatic audio/video device switching by blocking device change notifications. documentPictureInPicture: replace Electron's non-functional Document Picture-in-Picture API so Teams can show its floating call controls (Call Monitor) in a small always-on-top window; defaults to true, set false to fall back to Electron's native (broken) API.",
         type: "object",
         fields: {
           "microphone.disableAutogain": {
@@ -823,16 +1007,16 @@ module.exports = {
           "showStatusOnDockIcon": {
             type: "boolean",
             describe:
-              "Overlay the user presence status on the Dock icon on macOS.",
+              "Overlay the user presence status on the app icon: the Dock on macOS, the tray icon on the platforms that have no Dock. While the dot is drawn the unread badge moves to the other corner.",
           },
           "macPerformanceMode": {
             type: "boolean",
             describe:
               "On macOS, force-enable native hardware/rendering optimizations (Metal ANGLE, GPU rasterization, hardware WebRTC codecs) at startup; set false to opt out without disabling the GPU entirely.",
           },
-          // preventDeviceSwitching is documented in the option's `describe`
-          // above; see the note in the download.fields block on why it isn't a
-          // per-leaf entry.
+          // preventDeviceSwitching and documentPictureInPicture are documented
+          // in the option's `describe` above; see the note in the
+          // download.fields block on why they aren't per-leaf entries.
         },
         applyMode: "restart",
       },
@@ -1003,7 +1187,16 @@ module.exports = {
             pinDialog: {
               enabled: false,
             },
+            path: "",
+            password: "",
           },
+          serverWhitelist: "*",
+          basic: {
+            user: "",
+            passwordCommand: "",
+            hosts: [],
+          },
+          customCACertificateFingerprints: [],
           webLogin: {
             user: "",
             passwordCommand: "",
@@ -1016,7 +1209,7 @@ module.exports = {
             days: 400
           }
         },
-        describe: "Authentication configuration. auth.webauthn.enabled turns on hardware security key support on Linux (requires fido2-tools). auth.webauthn.debug enables verbose diagnostic logs, intended for beta testers only. auth.webauthn.extraOrigins adds exact https sign-in origins allowed to use hardware keys, for federated tenants whose FIDO2 prompt is served off the Microsoft login hosts. auth.reauthRecovery.enabled opts into the in-app re-authentication recovery feature and is off by default; while off, renderer auth-failure signals are ignored and Teams' own stale 'sign in again' banner is left untouched (you re-authenticate by relaunching, as before this feature existed). When on, a reliable MSAL InteractionRequired signal automatically clears stale auth state and reloads to force a fresh interactive login, and clicking the stale 'sign in again' banner is intercepted to recover in-app instead of opening the login popup externally. Uncaught Teams worker 'UPR' errors are noisy and fire on healthy sessions, so they never trigger an automatic reload on their own; they only help recognise a genuinely broken session for the banner interception. Interception only happens when the session has emitted a trusted auth-failure signal within the last hour, so login popups from healthy flows (initial sign-in, consent and step-up prompts, adding an account) are never diverted. During an active call, recovery is never run silently (it would end the call): the user is asked whether to sign in now, after the call, or not at all. auth.clientCertificate.pinDialog.enabled (Linux only) shows a PIN dialog for smartcard / PKCS#11 client certificates and is off by default. auth.webLogin.* pre-fills the Microsoft/federated web sign-in page so you don't retype credentials each launch: auth.webLogin.user pre-fills the email/account field, auth.webLogin.passwordCommand runs a shell command (e.g. 'pass show teams') and pre-fills its first stdout line into the password field (the app stores no secret), auth.webLogin.autoSubmit clicks through the steps, auth.webLogin.verifyMethod clicks the matching option on the MFA 'Verify your identity' page (e.g. 'Text'), and auth.webLogin.extraHosts adds login hosts beyond the Microsoft defaults. All off/empty by default. Distinct from ssoBasicAuth*, which drive the native HTTP Basic/NTLM dialog, not the web form.",
+        describe: "Authentication configuration. auth.webauthn.enabled turns on hardware security key support on Linux (requires fido2-tools). auth.webauthn.debug enables verbose diagnostic logs, intended for beta testers only. auth.webauthn.extraOrigins adds exact https sign-in origins allowed to use hardware keys, for federated tenants whose FIDO2 prompt is served off the Microsoft login hosts. auth.reauthRecovery.enabled opts into the in-app re-authentication recovery feature and is off by default; while off, renderer auth-failure signals are ignored and Teams' own stale 'sign in again' banner is left untouched (you re-authenticate by relaunching, as before this feature existed). When on, a reliable MSAL InteractionRequired signal automatically clears stale auth state and reloads to force a fresh interactive login, and clicking the stale 'sign in again' banner is intercepted to recover in-app instead of opening the login popup externally. Uncaught Teams worker 'UPR' errors are noisy and fire on healthy sessions, so they never trigger an automatic reload on their own; they only help recognise a genuinely broken session for the banner interception. Interception only happens when the session has emitted a trusted auth-failure signal within the last hour, so login popups from healthy flows (initial sign-in, consent and step-up prompts, adding an account) are never diverted. During an active call, recovery is never run silently (it would end the call): the user is asked whether to sign in now, after the call, or not at all. auth.clientCertificate.pinDialog.enabled (Linux only) shows a PIN dialog for smartcard / PKCS#11 client certificates and is off by default. auth.webLogin.* pre-fills the Microsoft/federated web sign-in page so you don't retype credentials each launch: auth.webLogin.user pre-fills the email/account field, auth.webLogin.passwordCommand runs a shell command (e.g. 'pass show teams') and pre-fills its first stdout line into the password field (the app stores no secret), auth.webLogin.autoSubmit clicks through the steps, auth.webLogin.verifyMethod clicks the matching option on the MFA 'Verify your identity' page (e.g. 'Text'), and auth.webLogin.extraHosts adds login hosts beyond the Microsoft defaults. All off/empty by default. Distinct from auth.basic.*, which drive the native HTTP Basic/NTLM dialog, not the web form. auth.serverWhitelist, auth.basic.user, auth.basic.passwordCommand, auth.clientCertificate.path, auth.clientCertificate.password and auth.customCACertificateFingerprints replace the deprecated authServerWhitelist, ssoBasicAuthUser, ssoBasicAuthPasswordCommand, clientCertPath, clientCertPassword and customCACertsFingerprints options.",
         type: "object",
         fields: {
           "intune.enabled": {
@@ -1051,6 +1244,35 @@ module.exports = {
             type: "boolean",
             describe:
               "Show a PIN dialog for smartcard / PKCS#11 client certificates on Linux (issue #2639); off by default. Has no effect on macOS or Windows, which provide native PIN prompts.",
+          },
+          "clientCertificate.path": {
+            type: "string",
+            describe: "Custom Client Certs for corporate authentication (certificate must be in pkcs12 format)",
+          },
+          "clientCertificate.password": {
+            type: "string",
+            describe: "Custom Client Certs password for corporate authentication (certificate must be in pkcs12 format)",
+          },
+          "serverWhitelist": {
+            type: "string",
+            describe: "Set auth-server-whitelist value",
+          },
+          "basic.user": {
+            type: "string",
+            describe: "User to use for SSO basic auth.",
+          },
+          "basic.passwordCommand": {
+            type: "string",
+            describe: "Command to execute to retrieve password for SSO basic auth.",
+          },
+          "basic.hosts": {
+            type: "array",
+            describe:
+              "Hostnames (or parent domains) allowed to receive the basic auth credentials or the login dialog, for example your ADFS host. Empty answers any HTTPS server that asks. Proxy challenges are always answered, and cleartext HTTP servers never are.",
+          },
+          "customCACertificateFingerprints": {
+            type: "array",
+            describe: "Array of custom CA Certs Fingerprints to allow SSL unrecognized signer or self signed certificate",
           },
           "webLogin.user": {
             type: "string",
@@ -1139,7 +1361,7 @@ module.exports = {
           "disableWhileFocused": {
             type: "array",
             describe:
-              "Array of global shortcuts to disable while the app is in focus. See https://www.electronjs.org/docs/latest/api/accelerator for available accelerators to use",
+              "Array of global shortcuts to disable while the app is in focus. See https://www.electronjs.org/docs/latest/tutorial/keyboard-shortcuts#accelerators for available accelerators to use",
           },
         },
         applyMode: "restart",
@@ -1256,7 +1478,7 @@ module.exports = {
         fields: {
           "cssName": {
             type: "string",
-            describe: "custom CSS name for the packaged available css files. Currently those are: \"compactDark\", \"compactLight\", \"tweaks\", \"condensedDark\" and \"condensedLight\" ",
+            describe: "Packaged CSS theme name (compactDark, compactLight, tweaks, condensedDark, condensedLight), or custom:<id> for a discovered user theme. An empty name uses appearance.cssLocation when configured.",
           },
           "cssLocation": {
             type: "string",
@@ -1278,6 +1500,7 @@ module.exports = {
           emulateWindowsChromium: false,
           spellCheckerLanguages: [],
           disableTimestampOnCopy: false,
+          disableUrlPreviews: false,
         },
         describe:
           "Platform emulation and OS integration configuration. Replaces the deprecated chromeUserAgent, emulateWinChromiumPlatform, spellCheckerLanguages and disableTimestampOnCopy options.",
@@ -1298,6 +1521,10 @@ module.exports = {
           "disableTimestampOnCopy": {
             type: "boolean",
             describe: "Controls whether timestamps are included when copying messages in chats",
+          },
+          "disableUrlPreviews": {
+            type: "boolean",
+            describe: "Keep pasted links as plain URLs: block the Teams URL preview lookup that replaces them with the page title and adds a preview card",
           },
         },
         applyMode: "restart",
@@ -1330,6 +1557,7 @@ module.exports = {
       window: {
         default: {
           frame: true,
+          titleBar: "system",
           menubar: "auto",
           minimized: false,
           closeOnCross: false,
@@ -1344,6 +1572,11 @@ module.exports = {
           "frame": {
             type: "boolean",
             describe: "Specify false to create a Frameless Window. Default is true",
+          },
+          "titleBar": {
+            type: "string",
+            choices: ["system", "integrated"],
+            describe: "Title bar style. \"system\" uses the desktop's title bar; \"integrated\" hides it and draws the window controls over the Teams top bar, like the official Windows client (Linux and Windows; ignored on macOS and when frame is false)",
           },
           "menubar": {
             type: "string",
@@ -1390,7 +1623,7 @@ module.exports = {
           },
           "icon": {
             type: "string",
-            describe: "Custom app icon (PNG) for the tray, the window icon on Windows and Linux, and the dock on macOS. Also settable from the App Icon menu",
+            describe: "Custom app icon (PNG) for the tray, the window icon on Windows and Linux, and the dock on macOS. Also settable from the App Icon menu, which on Linux can also copy it into the user icon theme (~/.local/share/icons) so the taskbar and launcher follow; those files outlive the package and are not written under Snap or Flatpak",
           },
           "iconType": {
             type: "string",

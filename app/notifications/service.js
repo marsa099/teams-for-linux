@@ -5,6 +5,10 @@ const path = require("node:path");
 const ICON_FETCH_TIMEOUT_MS = 1000;
 const MAX_ICON_BYTES = 5 * 1024 * 1024;
 
+// Electron does not always emit close, so live notifications are capped like
+// the renderer's NotificationBridge, dropping the oldest first.
+const MAX_TRACKED_NOTIFICATIONS = 50;
+
 const USER_STATUS = {
   UNKNOWN: -1,
   AVAILABLE: 1,
@@ -16,6 +20,11 @@ class NotificationService {
   #mainWindow;
   #getUserStatus;
   #notificationSounds;
+  // Electron's Notification is only weakly held by V8. Once the JS object is
+  // collected the native notification loses its delegate, so a click from the
+  // GNOME or KDE notification list, after the banner has gone, does nothing
+  // (issue #3121). Keyed by notificationId, in insertion order.
+  #liveNotifications = new Map();
 
   constructor(soundPlayer, config, mainWindow, getUserStatus) {
     this.#soundPlayer = soundPlayer;
@@ -33,6 +42,14 @@ class NotificationService {
         file: path.join(config.appPath, "assets/sounds/meeting_started.wav"),
       },
     ];
+  }
+
+  // Multi-account: brings the clicked notification's profile forward. Set
+  // once the profile view manager exists; unset with the flag off.
+  #activateProfile = null;
+
+  setProfileActivator(activate) {
+    this.#activateProfile = activate;
   }
 
   initialize() {
@@ -70,11 +87,14 @@ class NotificationService {
     try {
       const iconPromise = this.#loadIcon(options.icon).catch(() => null);
 
-      // Play notification sound if configured (await to catch any errors)
-      await this.#playNotificationSound({
-        type: options.type,
-        audio: "default",
-      });
+      // Play notification sound if configured (await to catch any errors).
+      // `silent` comes from a profile muted in multi-account mode.
+      if (!options.silent) {
+        await this.#playNotificationSound({
+          type: options.type,
+          audio: "default",
+        });
+      }
 
       const icon = await iconPromise;
       const notificationConfig = {
@@ -82,6 +102,7 @@ class NotificationService {
         body: options.body,
         urgency: this.#config.defaultNotificationUrgency,
         timeoutType: options.timeoutType === "never" ? "never" : "default",
+        silent: options.silent === true,
       };
 
       if (icon) notificationConfig.icon = icon;
@@ -101,6 +122,8 @@ class NotificationService {
       };
 
       notification.on("click", () => {
+        // Electron destroys the native notification after a click.
+        this.#liveNotifications.delete(options.notificationId);
         // notifications.electron.clickAction controls window behaviour on click
         // (issue #2647). Defaults to "show" so existing behaviour is unchanged.
         const clickAction = this.#config.notifications?.electron?.clickAction ?? "show";
@@ -114,6 +137,8 @@ class NotificationService {
         // with it.
         const win = this.#mainWindow.getWindow();
         if (!win || win.isDestroyed()) return;
+        // Before showing, so the window comes up on the right profile.
+        this.#activateProfile?.(sender);
         if (clickAction === "restore") {
           // restore if minimised, show if in the tray, then focus. Whether the
           // focus is honoured is window-manager dependent on Linux.
@@ -128,10 +153,12 @@ class NotificationService {
       });
 
       notification.on("close", () => {
+        this.#liveNotifications.delete(options.notificationId);
         console.debug("[NOTIFICATIONS] Notification dismissed by system");
         relay("notification-closed");
       });
 
+      this.#keepAlive(options.notificationId, notification);
       notification.show();
 
       const totalTime = Date.now() - startTime;
@@ -147,6 +174,13 @@ class NotificationService {
         elapsedMs: Date.now() - startTime,
         suggestion: "Check if notification permissions are granted or icon data is valid"
       });
+    }
+  }
+
+  #keepAlive(id, notification) {
+    this.#liveNotifications.set(id, notification);
+    if (this.#liveNotifications.size > MAX_TRACKED_NOTIFICATIONS) {
+      this.#liveNotifications.delete(this.#liveNotifications.keys().next().value);
     }
   }
 

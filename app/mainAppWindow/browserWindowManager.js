@@ -4,9 +4,11 @@ const {
   ipcMain,
   nativeTheme,
   powerSaveBlocker,
+  session,
 } = require("electron");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const webauthnBackend = require("../webauthn/backendStatus");
 const windowStateKeeper = require("electron-window-state");
 const { StreamSelector } = require("../screenSharing");
 const TrayIconChooser = require("../browser/tools/trayIconChooser");
@@ -15,11 +17,21 @@ const {
   collectPartitionsToClear,
   clearStorageForPartitions,
 } = require("../utils/storagePartitions");
+const {
+  isIntegratedTitleBar,
+  titleBarWindowOptions,
+  sanitizeOverlayUpdate,
+} = require("./titleBar");
 
 const MIN_WINDOW_WIDTH = 400;
 const MIN_WINDOW_HEIGHT = 300;
 
 class BrowserWindowManager {
+  // Last overlay report from each renderer, by webContents id. With several
+  // accounts open, every profile view reports, so only the visible account's
+  // report is applied, and switching accounts applies the new one's.
+  #overlayReports = new Map();
+
   constructor(properties) {
     this.config = properties.config;
     this.iconChooser = properties.iconChooser;
@@ -30,6 +42,8 @@ class BrowserWindowManager {
     this.window = null;
     this.incomingCallCommandProcess = null;
     this.incomingCallToast = null;
+    this.hasIncomingCall = false;
+    this.incomingCallWebContents = null;
   }
 
   /**
@@ -104,17 +118,21 @@ class BrowserWindowManager {
       autoHideMenuBar: this.config.menubar === "auto",
       icon: this.iconChooser ? this.getIconImage(this.iconChooser.getFile()) : undefined,
       frame: this.config.frame,
+      ...titleBarWindowOptions(this.config, nativeTheme.shouldUseDarkColors),
 
       webPreferences: {
         partition: this.config.partition,
         preload: path.join(__dirname, "..", "browser", "preload.js"),
         plugins: true,
         spellcheck: true,
-        webviewTag: true,
+        webviewTag: false,
         // SECURITY: Disabled for Teams DOM access, compensated by IPC validation
         contextIsolation: false,  // Required for ReactHandler DOM access
         nodeIntegration: false,   // Secure: preload scripts don't need this
         sandbox: false,           // Required for system API access
+        // Read synchronously by the preload to hide WebAuthn from the page
+        // when no security-key backend will answer (backendStatus.js).
+        additionalArguments: webauthnBackend.rendererArguments(this.config),
       },
     });
   }
@@ -143,6 +161,64 @@ class BrowserWindowManager {
     ipcMain.handle("call-connected", this.assignOnCallConnectedHandler());
     // Notify when a call is disconnected
     ipcMain.handle("call-disconnected", this.assignOnCallDisconnectedHandler());
+    if (isIntegratedTitleBar(this.config)) {
+      // Match the window controls to the Teams top bar's height and colour (integrated title bar)
+      ipcMain.on("title-bar-overlay-update", this.assignTitleBarOverlayHandler());
+      this.profilesManager?.on?.("switch", () => this.applyActiveTitleBarOverlay());
+    }
+  }
+
+  assignTitleBarOverlayHandler() {
+    return (event, payload) => {
+      const update = sanitizeOverlayUpdate(payload);
+      if (!update) {
+        return;
+      }
+      const sender = event?.sender;
+      if (sender && typeof sender.id === "number") {
+        if (!this.#overlayReports.has(sender.id)) {
+          sender.once?.("destroyed", () => this.#overlayReports.delete(sender.id));
+        }
+        this.#overlayReports.set(sender.id, { update, session: sender.session });
+      }
+      if (!sender || this.isActiveTitleBarSession(sender.session)) {
+        this.setTitleBarOverlay(update);
+      }
+    };
+  }
+
+  // Without multi-account there is only the root window, so every report is
+  // the visible one. With it, a report counts only if it comes from the
+  // active profile's partition.
+  isActiveTitleBarSession(senderSession) {
+    if (!this.config.multiAccount?.enabled || !this.profilesManager) {
+      return true;
+    }
+    const active = this.profilesManager.getActive?.();
+    if (!active?.partition) {
+      return true;
+    }
+    return senderSession === session.fromPartition(active.partition);
+  }
+
+  applyActiveTitleBarOverlay() {
+    for (const { update, session: reportSession } of this.#overlayReports.values()) {
+      if (this.isActiveTitleBarSession(reportSession)) {
+        this.setTitleBarOverlay(update);
+        return;
+      }
+    }
+  }
+
+  setTitleBarOverlay(update) {
+    if (!this.window || this.window.isDestroyed()) {
+      return;
+    }
+    try {
+      this.window.setTitleBarOverlay(update);
+    } catch (err) {
+      console.warn("[TITLE_BAR] Could not update the window controls", { error: err.message });
+    }
   }
 
   assignSelectSourceHandler() {
@@ -215,6 +291,8 @@ class BrowserWindowManager {
 
   assignOnIncomingCallCreatedHandler() {
     return async (e, data) => {
+      this.hasIncomingCall = true;
+      this.incomingCallWebContents = e?.sender ?? null;
       if (this.config.incomingCallCommand) {
         this.handleOnIncomingCallEnded();
         const commandArgs = [
@@ -240,10 +318,27 @@ class BrowserWindowManager {
   }
 
   assignOnIncomingCallEndedHandler() {
-    return async () => {
+    return async (e) => {
+      if (this.incomingCallWebContents && e?.sender !== this.incomingCallWebContents) return;
+      this.hasIncomingCall = false;
+      this.incomingCallWebContents = null;
       this.handleOnIncomingCallEnded();
       app.emit('teams-incoming-call-ended');
     };
+  }
+
+  performIncomingCallAction(action) {
+    if (!["ACCEPT_AUDIO", "ACCEPT_VIDEO", "DECLINE"].includes(action) || !this.hasIncomingCall) return false;
+    try {
+      let target = this.incomingCallWebContents;
+      if (!target) target = this.window?.webContents;
+      if (!target || target.isDestroyed()) return false;
+      target.send("incoming-call-action", action);
+      return true;
+    } catch (error) {
+      console.warn("[IncomingCall] Failed to dispatch call action", { message: error.message });
+      return false;
+    }
   }
 
   handleOnIncomingCallEnded() {
@@ -257,25 +352,25 @@ class BrowserWindowManager {
   }
 
   assignOnCallConnectedHandler() {
-    return async () => {
+    return async (event) => {
       this.isOnCall = true;
       const result = this.screenLockInhibitionMethod === "Electron"
         ? this.disableScreenLockElectron()
         : this.disableScreenLockWakeLockSentinel();
 
-      app.emit('teams-call-connected');
+      app.emit('teams-call-connected', event?.sender ?? null);
       return result;
     };
   }
 
   assignOnCallDisconnectedHandler() {
-    return async () => {
+    return async (event) => {
       this.isOnCall = false;
       const result = this.screenLockInhibitionMethod === "Electron"
         ? this.enableScreenLockElectron()
         : this.enableScreenLockWakeLockSentinel();
 
-      app.emit('teams-call-disconnected');
+      app.emit('teams-call-disconnected', event?.sender ?? null);
       return result;
     };
   }

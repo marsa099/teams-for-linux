@@ -3,6 +3,8 @@
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert');
 const { EventEmitter } = require('node:events');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const { installIpcSecurity } = require('../../app/security/ipcSecurity');
 
@@ -119,6 +121,23 @@ describe('IPC security - listener removal', () => {
 
     ipcMain.removeListener(ALLOWED, handler);
 
+    assert.strictEqual(ipcMain.listenerCount(ALLOWED), 0);
+  });
+
+  // The screen-share pickers register their reply with once() and remove it
+  // when the window closes without a choice. If that removal misses, every
+  // cancelled picker leaves a listener behind.
+  it('removes a once() listener that has not fired yet', () => {
+    const ipcMain = fakeIpcMain();
+    installIpcSecurity(ipcMain, silent);
+    let calls = 0;
+    const handler = () => { calls++; };
+
+    ipcMain.once(ALLOWED, handler);
+    ipcMain.removeListener(ALLOWED, handler);
+    ipcMain.emit(ALLOWED, {});
+
+    assert.strictEqual(calls, 0);
     assert.strictEqual(ipcMain.listenerCount(ALLOWED), 0);
   });
 
@@ -243,5 +262,143 @@ describe('IPC security - allowlist enforcement', () => {
 
     assert.strictEqual(Object.hasOwn(received, '__proto__'), false);
     assert.strictEqual(received.safe, 1);
+  });
+});
+
+// GHSA-3vg9-cwq9-p773: the Teams page could reach the screen-share picker's
+// channels and capture the screen with no picker shown. Those channels must
+// only answer frames that show a file shipped in the app directory.
+describe('IPC security - picker-only channels', () => {
+  const PICKER_CHANNEL = 'desktop-capturer-get-sources';
+  const appPage = { senderFrame: { url: pathToFileURL(path.join(__dirname, '..', '..', 'app', 'screenSharing', 'index.html')).href } };
+
+  for (const [label, event] of [
+    ['a remote page', { senderFrame: { url: 'https://teams.microsoft.com/v2/' } }],
+    ['a file outside the app directory', { senderFrame: { url: 'file:///tmp/evil.html' } }],
+    ['a sender with no frame', {}],
+  ]) {
+    it(`rejects invoke requests from ${label}`, async () => {
+      const ipcMain = fakeIpcMain();
+      installIpcSecurity(ipcMain, silent);
+      let called = false;
+      ipcMain.handle(PICKER_CHANNEL, () => { called = true; });
+
+      await assert.rejects(
+        () => ipcMain.invokeHandlers.get(PICKER_CHANNEL)(event, { types: ['screen'] }),
+        /Unauthorized IPC channel/,
+      );
+      assert.strictEqual(called, false);
+    });
+  }
+
+  it('drops picker events sent by a remote page', () => {
+    const ipcMain = fakeIpcMain();
+    installIpcSecurity(ipcMain, silent);
+    let called = false;
+    ipcMain.once('selected-source', () => { called = true; });
+
+    ipcMain.emit('selected-source', { senderFrame: { url: 'https://teams.microsoft.com/v2/' } }, { id: 'screen:0' });
+    assert.strictEqual(called, false);
+  });
+
+  // The once() wrapper checks the sender first and removes itself only for an
+  // allowed event, so a rejected event cannot spend the picker's listener.
+  it('keeps a once() listener armed after a rejected event, then fires it once', () => {
+    const ipcMain = fakeIpcMain();
+    installIpcSecurity(ipcMain, silent);
+    const received = [];
+    ipcMain.once('selected-source', (_event, source) => received.push(source.id));
+
+    ipcMain.emit('selected-source', { senderFrame: { url: 'https://teams.microsoft.com/v2/' } }, { id: 'spoofed' });
+    ipcMain.emit('selected-source', appPage, { id: 'screen:1' });
+    ipcMain.emit('selected-source', appPage, { id: 'screen:2' });
+
+    assert.deepStrictEqual(received, ['screen:1']);
+    assert.strictEqual(ipcMain.listenerCount('selected-source'), 0);
+  });
+
+  it('serves the picker page itself', async () => {
+    const ipcMain = fakeIpcMain();
+    installIpcSecurity(ipcMain, silent);
+    ipcMain.handle(PICKER_CHANNEL, () => 'sources');
+
+    assert.strictEqual(await ipcMain.invokeHandlers.get(PICKER_CHANNEL)(appPage, { types: ['screen'] }), 'sources');
+  });
+
+  it('leaves other channels open to any sender', async () => {
+    const ipcMain = fakeIpcMain();
+    installIpcSecurity(ipcMain, silent);
+    ipcMain.handle(ALLOWED, () => 'result');
+
+    assert.strictEqual(
+      await ipcMain.invokeHandlers.get(ALLOWED)({ senderFrame: { url: 'https://teams.microsoft.com/v2/' } }, {}),
+      'result',
+    );
+  });
+});
+
+describe('IPC security - listener failures', () => {
+  function recordingLogger() {
+    const errors = [];
+    return { errors, error: (...args) => errors.push(args) };
+  }
+
+  it('contains an exception thrown by an on() listener and keeps it registered', () => {
+    const ipcMain = fakeIpcMain();
+    const logger = recordingLogger();
+    installIpcSecurity(ipcMain, logger);
+    let calls = 0;
+    ipcMain.on(ALLOWED, (_event, payload) => {
+      calls += 1;
+      return payload.width;
+    });
+
+    assert.doesNotThrow(() => ipcMain.emit(ALLOWED, { sender: 'win' }));
+    ipcMain.emit(ALLOWED, { sender: 'win' }, { width: 1 });
+
+    assert.strictEqual(calls, 2);
+    assert.strictEqual(logger.errors.length, 1);
+    assert.ok(logger.errors[0][0].includes(ALLOWED), logger.errors[0][0]);
+    assert.strictEqual(logger.errors[0][1].name, 'TypeError');
+  });
+
+  it('contains an exception thrown by a once() listener', () => {
+    const ipcMain = fakeIpcMain();
+    const logger = recordingLogger();
+    installIpcSecurity(ipcMain, logger);
+    ipcMain.once(ALLOWED, () => {
+      const error = new Error("ENOENT: no such file, open '/home/alice/.config/teams-for-linux/settings.json'");
+      error.code = 'ENOENT';
+      throw error;
+    });
+
+    assert.doesNotThrow(() => ipcMain.emit(ALLOWED, { sender: 'win' }, {}));
+    assert.strictEqual(logger.errors.length, 1);
+    assert.deepStrictEqual(logger.errors[0][1], { name: 'Error', code: 'ENOENT' });
+    // Neither the message nor the stack is logged: both can carry a path.
+    assert.ok(!JSON.stringify(logger.errors[0]).includes('alice'));
+    assert.strictEqual(ipcMain.listenerCount(ALLOWED), 0);
+  });
+
+  it('handles the rejection of an async listener', async () => {
+    const ipcMain = fakeIpcMain();
+    const logger = recordingLogger();
+    installIpcSecurity(ipcMain, logger);
+    const unhandled = [];
+    const onUnhandled = (reason) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      ipcMain.on(ALLOWED, async () => {
+        throw new Error('async boom');
+      });
+      ipcMain.emit(ALLOWED, { sender: 'win' }, {});
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+
+    assert.deepStrictEqual(unhandled, []);
+    assert.strictEqual(logger.errors.length, 1);
+    assert.strictEqual(logger.errors[0][1].name, 'Error');
   });
 });

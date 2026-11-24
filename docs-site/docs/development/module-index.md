@@ -44,11 +44,18 @@ User-facing features and integrations.
 | **Global Shortcuts** | `app/globalShortcuts/` | System-wide keyboard shortcuts | No README yet |
 | **Graph API** | `app/graphApi/` | Microsoft Graph API integration for calendar and mail | [ADR-030](./adr/030-graph-api-teams-session-token.md), [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/graphApi/README.md) |
 | **Speaking Indicator** | `app/browser/tools/speakingIndicator.js` | Visual overlay showing microphone state during calls (speaking/silent/muted) via RTCPeerConnection.getStats(). Also provides WebRTC-based call state fallback for reliable MQTT in-call detection ([#2358](https://github.com/IsmaelMartinez/teams-for-linux/issues/2358)). | [PR #2299](https://github.com/IsmaelMartinez/teams-for-linux/pull/2299) |
+| **Document Picture-in-Picture** | `app/browser/tools/documentPictureInPicture.js`, `app/mainAppWindow/documentPictureInPicture.js` | Replaces Electron's non-functional `documentPictureInPicture` with an always-on-top popup so the Teams Call Monitor (MC1462921) can show floating call controls. On by default; `media.documentPictureInPicture: false` turns it off | [Tools README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/browser/tools/README.md) |
 | **Quick Chat** | `app/quickChat/` | Quick Chat modal with People API search and inline messaging via Graph API | [ADR-014](./adr/014-quick-chat-deep-link-approach.md), [ADR-015](./adr/015-quick-chat-inline-messaging.md) |
 | **WebAuthn / FIDO2** | `app/webauthn/` | Hardware security key support for Linux via fido2-tools interception of navigator.credentials | [ADR-021](./adr/021-webauthn-fido2-linux.md) |
 | **Client Certificate PIN** | `app/clientCertificate/` | Linux smartcard/NSS client-certificate PIN dialog built on the shared secure prompt ([#2639](https://github.com/IsmaelMartinez/teams-for-linux/issues/2639)) | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/clientCertificate/README.md) |
 | **Profiles Manager** | `app/profilesManager/` | Multi-account profile storage, switching, and lifecycle management | [ADR-020](./adr/020-multi-account-profile-switcher.md) |
+| **Profile Switcher** | `app/profileSwitcher/` | In-app account pill for switching between profile views (ADR-020 Phase 1) | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/profileSwitcher/README.md) |
+| **Profile Unread** | `app/profileUnread/` | Aggregates per-profile unread counts into one tray badge (ADR-020 Phase 2) | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/profileUnread/README.md) |
+| **Custom Stickers** | `app/customStickers/` | Opt-in sticker folder and URL import, sent into the compose box as a paste event | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/customStickers/README.md) |
 | **Profile Dialogs** | `app/profileDialogs/` | Add-profile, manage-profiles, and switch-profile UI dialogs | [ADR-020](./adr/020-multi-account-profile-switcher.md) |
+| **Profile Unread** | `app/profileUnread/` | Aggregates unread across profiles into one tray badge, dock count and tooltip | [ADR-020](./adr/020-multi-account-profile-switcher.md), [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/profileUnread/README.md) |
+| **Profile Notifications** | `app/profileNotifications/` | Per-profile `disableNotifications` and `muted`, enforced in each profile's renderer | [ADR-020](./adr/020-multi-account-profile-switcher.md), [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/profileNotifications/README.md) |
+| **Profile Activation** | `app/profileActivation/` | Clicking a notification switches to the profile that raised it | [ADR-020](./adr/020-multi-account-profile-switcher.md), [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/profileActivation/README.md) |
 | **Join Meeting Dialog** | `app/joinMeetingDialog/` | Join Meeting dialog for deep-link navigation handling | — |
 
 ## System Integration Modules
@@ -77,7 +84,10 @@ Supporting infrastructure, utilities, and cross-cutting concerns.
 | **Config** | `app/config/` | Configuration file loading and parsing | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/config/README.md) |
 | **Connection Manager** | `app/connectionManager/` | Network connectivity and connection state | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/connectionManager/README.md) |
 | **Partitions** | `app/partitions/` | Electron partition management for sessions | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/partitions/README.md) |
-| **Security** | `app/security/` | Security controls and validation | No README yet |
+| **Background Portal** | `app/backgroundPortal/` | Flatpak background-running request and status over `org.freedesktop.portal.Background` | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/backgroundPortal/README.md) |
+| **Security** | `app/security/` | IPC allowlist and sender pinning, webview guard, session permission policy ([ADR-035](adr/035-renderer-trust-boundary.md)) | [Security Architecture](security-architecture.md) |
+| **Control** | `app/control/` | Transport-neutral named Teams actions and observed state for optional adapters ([ADR-033](adr/033-dbus-control-api.md)) | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/control/README.md) |
+| **D-Bus** | `app/dbus/` | Opt-in Linux session-bus adapter for the control service | [README](https://github.com/IsmaelMartinez/teams-for-linux/blob/main/app/dbus/README.md), [D-Bus control guide](dbus-control.md) |
 | **Certificate** | `app/certificate/` | Custom certificate handling | [User Guide](../certificate.md) |
 
 ## UI Components

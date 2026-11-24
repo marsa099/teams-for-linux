@@ -14,6 +14,225 @@
   <url type="bugtracker">https://github.com/IsmaelMartinez/teams-for-linux/issues</url>
   <launchable type="desktop-id">com.github.IsmaelMartinez.teams_for_linux.desktop</launchable>
   <releases>
+    <release version="2.33.0" date="2026-11-24">
+      <description>
+        <ul>
+          <li>auth: add auth.basic.hosts to choose which servers receive basic auth credentials (#3242)</li>
+          <li>config: add platform.disableUrlPreviews to keep pasted links as plain URLs (#3234)</li>
+          <li>dbus: publish call participants and who is speaking (#3214)</li>
+          <li>intune: stop waiting on a broker that never answers (#3255)</li>
+          <li>ipc: contain errors thrown by IPC event listeners (#3241)</li>
+          <li>links: limit links opened outside the app to web, mail, phone and Teams schemes (#3240)</li>
+          <li>logging: keep config strings, MQTT topics and link URLs out of the logs (#3249)</li>
+          <li>media: match the PiP popup's sandbox to its opener and keep it on about:blank (#3254)</li>
+          <li>security: recognize MCAS-proxied Teams origins (#3237)</li>
+          <li>speakingindicator: move the indicator above the sticker button (#3211)</li>
+          <li>webauthn: hide webauthn from the page when no key backend will answer (#3245)</li>
+          <li>ipc: remove IPC handlers and page methods that nothing calls (#3247)</li>
+          <li>adr: add the unsandboxed popup rule to ADR-035 (#3244)</li>
+          <li>adr: record why the flat-name removal moved to 2.36.0 (#3222)</li>
+          <li>fix dead Electron accelerator links (#3228)</li>
+          <li>flatpak: document the TimeoutStopSec workaround for the slow shutdown (#3223)</li>
+          <li>security: align the security docs with the code and drop the unused token encryption path (#3248)</li>
+          <li>troubleshooting: describe the insert-key prompt on the stuck passkey screen (#3227)</li>
+          <li>snap: set the store credential only on the steps that publish (#3246)</li>
+          <li>deps-dev: bump the minor-and-patch group with 3 updates (#3250)</li>
+          <li>deps: bump katex and mermaid in /docs-site (#3224)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.32.1" date="2026-11-15">
+      <description>
+        <ul>
+          <li>deps: bump electron to 45.3.2 to stop the screen share crash (#3213)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.32.0" date="2026-11-15">
+      <description>
+        <ul>
+          <li>multi-account: a notification click switches to the profile that raised it (ADR-020 Phase 2) (#3218)</li>
+          <li>multi-account: per-profile notification and sound switches (#3198)</li>
+          <li>notifications: size, position, margin and style options for custom toasts (#3201)</li>
+          <li>config: say where to find Show Updated Config in the deprecation warning (#3217)</li>
+          <li>graph: follow @odata.nextLink so get-calendar returns every event (#3207)</li>
+          <li>snap: bundle libpipewire so Wayland screen sharing uses PipeWire (#3181)</li>
+          <li>config: move the flat-name removal from 2.32.0 to 2.36.0 (#3219)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.31.1" date="2026-11-11">
+      <description>
+        <ul>
+          <li>build: exclude the compiled cbor-extract from the package instead of deleting it after packing (#3209)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.31.0" date="2026-11-10">
+      <description>
+        <ul>
+          <li>dbus: add SetStatus presence control (#3178)</li>
+          <li>run native wayland by default on deb, rpm and appimage (#3129)</li>
+          <li>auth: keep msal.cache.encryption persistent on every profile session (#3193)</li>
+          <li>build: ship the prebuilt cbor-extract instead of the runner-compiled copy (#3194)</li>
+          <li>connection: clear service workers after a main-frame ERR_FAILED (#3145)</li>
+          <li>ADR catch-up, research index retirement and documentation sweep (#3196)</li>
+          <li>adr: mark ADR-018 superseded now the triage bot is retired (#3191)</li>
+          <li>describe versions relative to the release stream instead of hard-coded numbers (#3199)</li>
+          <li>link the community headset bridge and fix two shortcut rows (#3195)</li>
+          <li>move CLAUDE.md to AGENTS.md (ADR-036) (#3197)</li>
+          <li>deps: bump minimatch from 10.2.5 to 11.0.5 in /docs-site (#3190)</li>
+          <li>deps: bump the minor-and-patch group with 3 updates (#3205)</li>
+          <li>remove the finished smartcard PIN spike script (#3200)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.30.0" date="2026-11-07">
+      <description>
+        <ul>
+          <li>copy a chosen app icon into the user icon theme (#3031)</li>
+          <li>window: add an integrated title bar with client-side decorations (#3174)</li>
+          <li>appimage: switch to the static AppImage runtime so libfuse2 is no longer required (#3176)</li>
+          <li>auth: load teams again when sign-out lands on microsoft's signed-out page (#3169)</li>
+          <li>protocol: handle web+msteams links from the Teams launcher (#3162)</li>
+          <li>security: grant device permissions only to Teams, sign-in and app pages (#3185)</li>
+          <li>security: harden the preload IPC surface and keep credentials out of the renderer (#3184)</li>
+          <li>webauthn: wait for a security key instead of failing when none is plugged in (#3168)</li>
+          <li>appimage: note that libfuse2 is no longer required from 2.30.0 (#3186)</li>
+          <li>deps-dev: bump eslint (#3170)</li>
+          <li>deps-dev: bump follow-redirects from 1.16.1 to 1.16.2 (#3159)</li>
+          <li>deps-dev: bump qs from 6.16.0 to 6.17.1 (#3156)</li>
+          <li>deps: bump actions/setup-node from 7.0.0 to 7.1.0 (#3163)</li>
+          <li>deps: bump actions/upload-artifact from 7.0.1 to 7.0.2 (#3166)</li>
+          <li>deps: bump canonical/setup-lxd (#3165)</li>
+          <li>deps: bump follow-redirects from 1.16.1 to 1.16.2 in /docs-site (#3160)</li>
+          <li>deps: bump github/codeql-action from 4.38.2 to 4.39.1 (#3167)</li>
+          <li>deps: bump google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml (#3164)</li>
+          <li>deps: bump joi from 17.13.8 to 17.13.9 in /docs-site (#3179)</li>
+          <li>deps: bump qs from 6.16.0 to 6.17.1 in /docs-site (#3157)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.29.0" date="2026-10-30">
+      <description>
+        <ul>
+          <li>config: move the last 18 flat options into notifications, idleDetection, network and auth (#3142) (659b81a), closes #3140 #2842</li>
+          <li>config: show deprecated options once at startup and honour nested names from CLI and env (#3143)</li>
+          <li>screen-sharing: double-click a picker tile to start sharing (#3036)</li>
+          <li>connection: don't reload when Teams redirects the initial load (#3154) (d988e1b), closes #3152</li>
+          <li>dbus: explain how to write a device bridge on the control API (#3153)</li>
+          <li>deps-dev: bump electron from 44.9.0 to 44.9.1 (#3137)</li>
+          <li>deps-dev: bump undici from 6.29.0 to 6.29.1 (#3135)</li>
+          <li>deps: bump body-parser from 1.20.6 to 1.20.9 in /docs-site (#3139)</li>
+          <li>deps: bump dompurify from 3.4.16 to 3.4.17 in /docs-site (#3132)</li>
+          <li>deps: bump fast-uri from 3.1.8 to 3.1.9 (#3131)</li>
+          <li>deps: bump fast-uri from 3.1.8 to 3.1.9 in /docs-site (#3136)</li>
+          <li>deps: bump ip-address from 10.7.2 to 10.7.5 (#3134)</li>
+          <li>deps: bump postcss-selector-parser in /docs-site (#3147)</li>
+          <li>deps: bump the minor-and-patch group with 2 updates (#3146)</li>
+          <li>deps: bump undici from 7.30.0 to 7.30.1 in /docs-site (#3138)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.28.0" date="2026-10-25">
+      <description>
+        <ul>
+          <li>multi-account: unread indicators on the switcher pill (#3130)</li>
+          <li>tray: overlay the presence status on the tray icon (#3102)</li>
+          <li>media: restore audio-level mute detection (#3125)</li>
+          <li>notifications: keep electron notifications alive so clicks from the list still work (#3126)</li>
+          <li>notifications: use options.title for web and custom paths (#2789)</li>
+          <li>screen-sharing: use the full resolution when screen sharing (#2935) (3f95932), closes #2933</li>
+          <li>multiple-instances: link a community KDE tray tool for separate instances (#3020)</li>
+          <li>flatpak: fix the smoke build's app module and use Flathub's builder (#3118)</li>
+          <li>deps-dev: bump follow-redirects from 1.16.0 to 1.16.1 (#3122)</li>
+          <li>deps: bump follow-redirects from 1.16.0 to 1.16.1 in /docs-site (#3123)</li>
+          <li>deps: bump launch-editor from 2.14.1 to 2.14.2 in /docs-site (#3124)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.27.0" date="2026-10-19">
+      <description>
+        <ul>
+          <li>deps: upgrade to Electron 44.9.0 and drop the armv7l builds (#2995)</li>
+          <li>media: give the Document PiP popup a per-launch frame name (#3111)</li>
+          <li>troubleshooting: explain the stuck passkey sign-in screen (#3109)</li>
+          <li>deps: bump the minor-and-patch group in /docs-site with 2 updates (#3116)</li>
+          <li>deps: bump the minor-and-patch group with 3 updates (#3114)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.26.0" date="2026-10-17">
+      <description>
+        <ul>
+          <li>dbus: support distinct service names for separate instances (#3094)</li>
+          <li>docs-site: override tinypool to 2.x for GHSA-5gmw-xhrv-c9v3 / GHSA-85c8-ppgw-ccpr (#3104)</li>
+          <li>media: restore meeting pop-out by replacing Document Picture-in-Picture (#3107) (7dee649), closes #3106</li>
+          <li>snap: isolate fontconfig cache to prevent square font rendering (#3103)</li>
+          <li>troubleshooting: document hardware-observe fix for snap netlink denials (#3097) (d1643b4), closes #3096</li>
+          <li>troubleshooting: update fontconfig cache clearing steps (#3093)</li>
+          <li>deps-dev: bump the minor-and-patch group with 2 updates (#3100)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.25.0" date="2026-10-09">
+      <description>
+        <ul>
+          <li>add discoverable user themes (#3081)</li>
+          <li>add session D-Bus controls and Teams state signals (#3059)</li>
+          <li>multi-account: aggregate unread across profiles into one tray badge (ADR-020 Phase 2) (#2980)</li>
+          <li>multi-account: keep profile views attached so switched-to profiles take input (#3061)</li>
+          <li>multi-account: refocus the active profile when the window regains focus (#3065)</li>
+          <li>multi-account: window title follows the active profile (#3069)</li>
+          <li>packaging: declare ALSA and libgbm in the .deb Depends (#3070)</li>
+          <li>startup: disable UsePortalAccentColor on Linux so the OS dark theme is followed (#3071) (d308758), closes #3023</li>
+          <li>startup: check disable-features tokens through a Set (#3079)</li>
+          <li>adr: ADR-032 opt-in secondary window for calls, supersedes ADR-010 (#3000)</li>
+          <li>troubleshooting: add XWayland screen sharing issue (#3088)</li>
+          <li>deps-dev: bump globals (#3062)</li>
+          <li>deps-dev: bump http-cache-semantics from 4.2.0 to 4.3.0 (#3072)</li>
+          <li>deps: bump compression from 1.8.1 to 1.8.2 in /docs-site (#3073)</li>
+          <li>deps: bump http-cache-semantics from 4.2.0 to 4.3.0 in /docs-site (#3077)</li>
+          <li>deps: bump joi from 17.13.7 to 17.13.8 in /docs-site (#3074)</li>
+          <li>deps: bump proxy-addr from 2.0.7 to 2.0.8 in /docs-site (#3076)</li>
+          <li>deps: bump shell-quote from 1.10.0 to 1.12.0 in /docs-site (#3078)</li>
+          <li>deps: bump source-map-js from 1.2.1 to 1.2.2 in /docs-site (#3075)</li>
+        </ul>
+      </description>
+    </release>
+    <release version="2.24.0" date="2026-10-03">
+      <description>
+        <ul>
+          <li>mqtt: publish the ringing call's caller to incoming-call/caller (#3022)</li>
+          <li>cap the window icon so x11 does not drop it (#3030)</li>
+          <li>config: deep-merge object option defaults and system/user config (#3014)</li>
+          <li>ipc: make a pending once() listener removable through the security wrapper (#3055)</li>
+          <li>links: catch openExternal rejection so unknown schemes don't exit the app (#3049)</li>
+          <li>lint: lint the whole repo and fix the errors it surfaces (#3015)</li>
+          <li>mqtt: recognize phone and call-queue calls as incoming calls (#3021) (a17c77f), closes #3019</li>
+          <li>security: block webview attach and validate sticker import bytes (#3053)</li>
+          <li>security: stop leaking ipcRenderer and pin picker IPC to app pages (#3054)</li>
+          <li>webauthn: log a hint when a subframe is skipped from the allowlist (#3052)</li>
+          <li>window: enforce a minimum window size to prevent a 1x1 restore (#3003)</li>
+          <li>window: show app.title in the window title to tell instances apart (#3038)</li>
+          <li>roadmap: track WebAuthn on Linux and the Flatpak libfido2 bundle (#3024) (d6a427e), closes #3008</li>
+          <li>guard release-please PR output against empty step env (#3017)</li>
+          <li>deps-dev: bump brace-expansion from 1.1.18 to 1.1.21 (#3040)</li>
+          <li>deps-dev: bump undici from 6.28.0 to 6.29.0 (#3039)</li>
+          <li>deps: bump actions/deploy-pages from 5.0.0 to 5.0.1 (#3045)</li>
+          <li>deps: bump brace-expansion from 5.0.9 to 5.0.12 in /docs-site (#3041)</li>
+          <li>deps: bump canonical/setup-lxd (#3046)</li>
+          <li>deps: bump dompurify from 3.4.13 to 3.4.16 in /docs-site (#3042)</li>
+          <li>deps: bump fast-uri to 3.1.8 to clear Dependabot alerts (#3051)</li>
+          <li>deps: bump github/codeql-action from 4.37.9 to 4.38.2 (#3047)</li>
+          <li>deps: bump google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml (#3043)</li>
+          <li>deps: bump google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml (#3044)</li>
+          <li>deps: bump ip-address from 10.4.0 to 10.7.2 (#3029)</li>
+          <li>deps: bump the minor-and-patch group with 2 updates (#3026)</li>
+          <li>deps: bump undici from 7.29.0 to 7.30.0 in /docs-site (#3028)</li>
+        </ul>
+      </description>
+    </release>
     <release version="2.23.0" date="2026-09-26">
       <description>
         <ul>

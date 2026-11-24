@@ -2,7 +2,7 @@
 title: "Architecture Decision Records"
 sidebar_position: 1
 type: reference
-last_updated: 2026-09-05
+last_updated: 2026-11-07
 tags: [adr, architecture, decisions]
 ---
 
@@ -24,15 +24,15 @@ Architecture Decision Records capture important architectural decisions along wi
 | ADR | Title | Status | Date | Version |
 |-----|-------|--------|------|---------|
 | [001](001-desktopcapturer-source-id-format.md) | DesktopCapturer Source ID Format | ✅ Implemented | 2025-09-15 | v2.3.0+ |
-| [002](002-token-cache-secure-storage.md) | Token Cache Secure Storage | ✅ Implemented | 2025-09-08 | v2.5.9 |
+| [002](002-token-cache-secure-storage.md) | Token Cache Secure Storage | ✅ Implemented (cache bridge only; the encryption phase never took effect) | 2025-09-08 | v2.5.9 |
 | [003](003-token-refresh-implementation.md) | Token Refresh Implementation | ✅ Implemented | 2025-09-22 | v2.6.0 |
-| [004](004-agents-md-standard-investigation.md) | agents.md Standard Investigation | ❌ Rejected | 2025-11-16 | N/A |
+| [004](004-agents-md-standard-investigation.md) | agents.md Standard Investigation | 🔄 Superseded by [036](036-agents-md-adoption.md) | 2025-11-16 | N/A |
 | [005](005-ai-powered-changelog-generation.md) | AI-Powered Changelog Generation | 🔄 Superseded by [023](023-release-automation-tooling.md) | 2025-11-17 | v2.6.15 |
 | [006](006-cli-argument-parsing-library.md) | CLI Argument Parsing Library | ✅ Implemented | 2025-11-19 | N/A |
 | [007](007-embedded-mqtt-broker.md) | Embedded MQTT Broker | ❌ Rejected | 2025-11-19 | N/A |
 | [008](008-usesystempicker-electron-38.md) | useSystemPicker Feature for Electron 38 | ❌ Rejected | 2025-11-24 | N/A |
 | [009](009-automated-testing-strategy.md) | Automated Testing Strategy | ✅ Implemented | 2025-12-13 | v2.7.4+ |
-| [010](010-multiple-windows-support.md) | Multiple Windows Support | ❌ Rejected | 2025-11-26 | N/A |
+| [010](010-multiple-windows-support.md) | Multiple Windows Support | 🔄 Superseded by [032](032-secondary-window-for-calls.md) | 2025-11-26 | N/A |
 | [011](011-appimage-update-info.md) | AppImage Update Info for Third-Party Managers | 🔄 Superseded | 2026-01-25 | v2.7.1 |
 | [012](012-intune-sso-broker-compatibility.md) | Intune SSO Broker Compatibility | ✅ Implemented | 2026-01-25 | v2.7.1 |
 | [013](013-pii-log-sanitization.md) | PII Log Sanitization | ✅ Implemented | 2026-01-31 | v2.7.3 |
@@ -40,7 +40,7 @@ Architecture Decision Records capture important architectural decisions along wi
 | [015](015-quick-chat-inline-messaging.md) | Quick Chat Inline Messaging | ✅ Implemented | 2026-02-04 | N/A |
 | [016](016-cross-distro-testing-environment.md) | Cross-Distro Testing Environment | ✅ Implemented | 2026-02-25 | v2.7.9 |
 | [017](017-workflow-run-pr-comments.md) | Use workflow_run for PR Artifact Comments | ✅ Implemented | 2026-02-26 | N/A |
-| [018](018-issue-triage-bot-github-app-migration.md) | Issue Triage Bot GitHub App Migration | ✅ Implemented | 2026-03-06 | N/A |
+| [018](018-issue-triage-bot-github-app-migration.md) | Issue Triage Bot GitHub App Migration | 🔄 Superseded (service retired 2026-11-07) | 2026-03-06 | N/A |
 | [019](019-repo-activity-dashboard.md) | Repository Activity Dashboard | ✅ Implemented | 2026-03-11 | N/A |
 | [020](020-multi-account-profile-switcher.md) | Multi-Account Profile Switcher | ✅ Implemented | 2026-04-16 | v2.9.0+ |
 | [021](021-webauthn-fido2-linux.md) | WebAuthn / FIDO2 Hardware Security Keys on Linux | ✅ Implemented | 2026-04-21 | v2.10.0 |
@@ -52,7 +52,12 @@ Architecture Decision Records capture important architectural decisions along wi
 | [028](028-third-party-idp-otc-prefill.md) | One-Time-Code Pre-fill on Third-Party IdPs | ❌ Rejected | 2026-08-19 | N/A |
 | [029](029-config-schema-single-source-of-truth.md) | Configuration Schema as Single Source of Truth | ✅ Accepted | 2026-09-05 | v2.12.0+ |
 | [030](030-graph-api-teams-session-token.md) | Graph API Access via the Teams Session Token | ✅ Implemented | 2025-11-21 | v2.6.17 |
-| [031](031-ozone-platform-x11-default.md) | Keep the `--ozone-platform=x11` Default on Wayland | ✅ Accepted | 2026-09-05 | N/A |
+| [031](031-ozone-platform-x11-default.md) | Keep the `--ozone-platform=x11` Default on Wayland | 🔄 Superseded by 034 except snap | 2026-09-05 | N/A |
+| [032](032-secondary-window-for-calls.md) | Opt-in Secondary Window for the Same Account During Calls | 🚧 Proposed | 2026-09-18 | N/A |
+| [033](033-dbus-control-api.md) | Opt-in D-Bus Control API for Teams Actions and State | ✅ Implemented | 2026-10-06 | v2.25.0+ |
+| [034](034-native-wayland-default.md) | Native Wayland by Default on deb, rpm and integrated AppImage | ✅ Accepted | 2026-10-22 | pending release |
+| [035](035-renderer-trust-boundary.md) | Renderer Trust Boundary with Context Isolation Disabled | ✅ Implemented | 2026-11-07 | v2.24.0, v2.30.0 |
+| [036](036-agents-md-adoption.md) | Adopt AGENTS.md as the Agent Instruction File | ✅ Accepted | 2026-11-07 | N/A |
 
 **Legend:**
 - ✅ **Implemented** - Decision accepted and code in production
@@ -67,7 +72,7 @@ Architecture Decision Records capture important architectural decisions along wi
 
 | ADR | Title | Summary |
 |-----|-------|---------|
-| [002](002-token-cache-secure-storage.md) | Token Cache Secure Storage | Secure token storage using Electron safeStorage with OS-level encryption to prevent daily re-authentication |
+| [002](002-token-cache-secure-storage.md) | Token Cache Secure Storage | Token cache bridge that prevents daily re-authentication; the planned safeStorage encryption never took effect and was removed |
 | [003](003-token-refresh-implementation.md) | Token Refresh Implementation | Configurable token refresh mechanism to proactively renew authentication before expiry |
 | [012](012-intune-sso-broker-compatibility.md) | Intune SSO Broker Compatibility | Direct D-Bus invocation for Microsoft Identity Broker version compatibility |
 | [013](013-pii-log-sanitization.md) | PII Log Sanitization | Custom regex sanitizer to redact sensitive data from logs |
@@ -75,15 +80,16 @@ Architecture Decision Records capture important architectural decisions along wi
 | [024](024-smartcard-pkcs11-pin-dialog.md) | Smartcard PKCS#11 PIN Dialog | PIN collected in a hardened main-process window, never injected into the Teams page |
 | [028](028-third-party-idp-otc-prefill.md) | One-Time-Code Pre-fill on Third-Party IdPs | Rejected DOM-based OTC pre-fill for Okta and similar; Electron cannot host a password-manager extension, so contract-backed factors are the answer |
 | [030](030-graph-api-teams-session-token.md) | Graph API Access via the Teams Session Token | Reuse the Teams web app's own Graph token for API access instead of registering a separate Azure AD application |
+| [035](035-renderer-trust-boundary.md) | Renderer Trust Boundary with Context Isolation Disabled | Treat the Teams window's JavaScript world as page-controlled: `ipcRenderer` stays in preload closures, the main process pins privileged channels to the sender frame, the renderer config carries no credentials, and session permission handlers grant devices only to trusted requesters |
 
 **Key Outcomes:**
 - Eliminated daily re-authentication issues
-- Platform-native secure storage (Keychain/DPAPI/kwallet)
-- Graceful fallback for unsupported platforms
+- Token cache bridge that passes values to `localStorage`, with an in-memory fallback when storage is full
 - Configurable refresh intervals
 - Support for Microsoft Identity Broker versions ≤ 2.0.1 and > 2.0.1
 - PII sanitization with zero dependencies, UUIDs correlatable for debugging
 - Graph API token reuse needs no app registration or admin consent, but caps scopes at what Teams web already holds (`/me/presence` returns 403)
+- Three 2026 advisories (GHSA-3vg9, GHSA-6xpg, GHSA-58j7) closed by moving trust out of the shared renderer world; a navigation lock in front of the preload is the remaining follow-up
 
 ### Screen Sharing
 
@@ -102,12 +108,13 @@ Architecture Decision Records capture important architectural decisions along wi
 
 | ADR | Title | Summary |
 |-----|-------|---------|
-| [031](031-ozone-platform-x11-default.md) | Keep the `--ozone-platform=x11` Default on Wayland | Ship `--ozone-platform=x11` as the default on deb, rpm, AppImage and snap; #2506 was reverted the same day as an accidental merge, and #2601 was closed unmerged after a regression, with concrete reopen triggers recorded |
+| [031](031-ozone-platform-x11-default.md) | Keep the `--ozone-platform=x11` Default on Wayland | Ship `--ozone-platform=x11` as the default on deb, rpm, AppImage and snap; #2506 was reverted the same day as an accidental merge, and #2601 was closed unmerged after a regression, with concrete reopen triggers recorded. Superseded by 034 except snap |
+| [034](034-native-wayland-default.md) | Native Wayland by Default on deb, rpm and integrated AppImage | Drop the packaged `--ozone-platform=x11` on deb, rpm and AppImage on the Electron 44 baseline; snap keeps it. Answers ADR-031's reopen triggers and names the GNOME multi-monitor case as the open risk |
 
 **Key Outcomes:**
-- Predictable default rendering path across deb, rpm, AppImage, tar.gz and snap
+- deb, rpm and integrated AppImage follow the session backend, like Flatpak and tar.gz; the snap keeps `--ozone-platform=x11`
 - `electronCLIFlags` cannot override the flag; only a genuine command-line or `.desktop` override can
-- Reopen triggers tied to a working snap core24 migration, a verified Electron/Chromium fix, and ADR-016 matrix validation
+- ADR-016 matrix, GNOME and KDE two-monitor checks all passed on the PR build; Enterprise Linux 8 (GTK 3.22) needs the documented `.desktop` override
 
 ### Testing & Quality
 
@@ -140,14 +147,15 @@ Architecture Decision Records capture important architectural decisions along wi
 
 | ADR | Title | Summary |
 |-----|-------|---------|
-| [004](004-agents-md-standard-investigation.md) | agents.md Standard Investigation | Investigated and rejected agents.md standard in favor of tool-specific standards (CLAUDE.md, copilot-instructions.md) |
+| [004](004-agents-md-standard-investigation.md) | agents.md Standard Investigation | Investigated and rejected agents.md standard while no tool read it; superseded by ADR-036 |
+| [036](036-agents-md-adoption.md) | Adopt AGENTS.md as the Agent Instruction File | Renamed `CLAUDE.md` to `AGENTS.md` once Claude Code read it natively (v2.1.277+); no stub or symlink, because a `CLAUDE.md` makes Claude Code ignore `AGENTS.md` |
 | [025](025-config-option-naming-convention.md) | Configuration Option Naming Convention | Nesting criteria, positive naming, and the resolved flat-to-nested rename mapping for configuration options |
 | [029](029-config-schema-single-source-of-truth.md) | Configuration Schema as Single Source of Truth | One-schema-three-consumers thesis: `app/config/options.js` feeds the generated docs, the docs explorer, and startup validation |
 
 **Key Outcomes:**
 - Consolidated instruction files (removed 28% duplication)
 - Centralized markdown standards in contributing.md
-- Maintained tool-specific official standards
+- Single vendor-neutral `AGENTS.md` instruction file, owned by ADR-036
 - Configuration option naming convention and rename mapping owned by ADR-025
 - Configuration schema treated as single source of truth for generated docs, the docs explorer, and startup validation, owned by ADR-029
 
@@ -166,7 +174,7 @@ Architecture Decision Records capture important architectural decisions along wi
 - Quality score: 9.0/10 on validation testing
 - Zero cost (uses Gemini API free tier)
 - Fork PRs receive artifact download comments without 403 permission errors
-- Issue triage bot runs as a standalone GitHub App with one-click installation and no in-repo workflow files
+- Issue triage bot ran as a standalone GitHub App with no in-repo workflow files until it was retired on 2026-11-07
 
 ### Community & Metrics
 
@@ -185,18 +193,20 @@ Architecture Decision Records capture important architectural decisions along wi
 |-----|-------|---------|
 | [006](006-cli-argument-parsing-library.md) | CLI Argument Parsing Library | Keep yargs for config parsing, use MQTT for action commands instead of CLI subcommands |
 | [007](007-embedded-mqtt-broker.md) | Embedded MQTT Broker | Rejected bundling Aedes broker - users still need client tools, better alternatives exist |
+| [033](033-dbus-control-api.md) | Opt-in D-Bus Control API | Fixed named Teams actions and observed state on the Linux user session bus, behind `dbusControl.enabled`, through a transport-neutral control service; MQTT stays independent |
 
 **Key Outcomes:**
 - Avoid fragile CLI argument bypass layer
 - MQTT commands provide clean architecture for external triggers
 - Users provide own MQTT broker (localhost or Home Assistant)
-- Consider HTTP server for zero-dependency alternative (future)
+- Same-machine integrations (Stream Deck, headset bridges, busy lights) use the D-Bus API with no broker; the HTTP server idea from ADR-007 was not needed
 
 ### UI Features
 
 | ADR | Title | Summary |
 |-----|-------|---------|
-| [010](010-multiple-windows-support.md) | Multiple Windows Support | Rejected multi-window due to Teams architecture constraints |
+| [010](010-multiple-windows-support.md) | Multiple Windows Support | Rejected multi-window in 2025; superseded by 032 after the web app was shown to allow concurrent instances |
+| [032](032-secondary-window-for-calls.md) | Opt-in Secondary Window for the Same Account During Calls | Opt-in second `BrowserWindow` on the same partition so a call can live in one window while the other stays a full client; meeting links and a calendar-based join route to it, no DOM hooks, the call itself is never moved |
 | [014](014-quick-chat-deep-link-approach.md) | Quick Chat Deep Link Approach | Use People API + Deep Links for quick chat access after Chat API was blocked |
 | [015](015-quick-chat-inline-messaging.md) | Quick Chat Inline Messaging | Hybrid Teams commanding + Graph API approach for inline message sending |
 | [020](020-multi-account-profile-switcher.md) | Multi-Account Profile Switcher | WebContentsView-based profile switching with feature-flag gating |
@@ -383,20 +393,16 @@ When referencing code in ADRs:
 
 ## ADR Statistics
 
-- **Total ADRs**: 30
-- **Implemented**: 19
-- **Accepted**: 4
-- **Proposed**: 0
-- **Rejected**: 5
-- **Superseded**: 2
-- **Average length**: ~1050 words
-- **Topics covered**: 11 (Authentication & Security, Screen Sharing, Linux Desktop & Display Server, Testing & Quality, Performance, Documentation & Standards, Release Process & Automation, Community & Metrics, MQTT & Integration, UI Features, Distribution & Packaging)
+The Status Overview table above is the single source of truth for how many records exist and where each stands; counts are not repeated here so they cannot drift. The topics are the sections under By Topic.
+
+## Research Notes
+
+Active investigations live in `docs-site/docs/development/research/` while they are open, as plain markdown with a date, scope and recommendation. Once the question is decided, whether the feature shipped, was rejected or is parked, the decision moves into an ADR (new or updated) and the research document is deleted; the ADR's Related section names the deleted file so `git log --all -- <path>` recovers the full investigation. The directory does not exist while nothing is open, which has been the case since 2026-09; recreate it for the next spike.
 
 ## Related Documentation
 
 - **Contributing Guide**: [Development Guidelines](../contributing.md)
 - **Module Documentation**: [Module Index](../module-index.md)
-- **Research Documents**: [Research Index](../research/README.md)
 - **Development Roadmap**: [Future Plans](../plan/roadmap.md)
 - **Configuration Reference**: [Configuration Options](../../configuration.md)
 

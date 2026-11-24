@@ -118,8 +118,20 @@ Fixes camera video stretching when moving Teams between monitors with different 
 
 **Use Case**: Multi-monitor setups with different orientations, prevents stretched/distorted camera feed when moving windows between portrait and landscape monitors
 
+#### [callParticipants.js](callParticipants.js)
+Reads the remote participants on the meeting stage and who is speaking, and sends them to the main process for the D-Bus `CallParticipantsChanged` signal. Each tile has `data-tid="voice-level-stream-outline"`; its `::before` is opaque while that person speaks. The display name is the tile's text, one entry per tile. Polls every 500 ms during a call and sends only changes. Names are never logged.
+
+**Configuration**: `dbusControl.enabled: true` and `dbusControl.callParticipants: true` (Linux only)
+**Use Case**: Local note takers and accessibility tools that attribute speech to participants
+
 #### [wakeLock.js](wakeLock.js)
 Prevents system sleep during meetings and active calls.
+
+#### [documentPictureInPicture.js](documentPictureInPicture.js)
+Replaces `window.documentPictureInPicture` so the Teams web Call Monitor ([MC1462921](https://mc.merill.net/message/MC1462921)) can show its floating call controls. Electron exposes the API, but the window from `requestWindow()` is closed about a millisecond after it resolves and is never drawn. The replacement opens a same-origin `about:blank` popup under a frame name the main process picks at random each launch and passes in through the config, so cross-origin frames inside Teams cannot open the window themselves. The main process ([../../mainAppWindow/documentPictureInPicture.js](../../mainAppWindow/documentPictureInPicture.js)) allows it as an always-on-top window capped at 800×600. All other `about:blank` popups stay denied. Teams renders its compact meeting view into the popup's document, with the event handlers running in the main window, so the call itself never leaves the main window. Returning to the meeting, closing the popup or pressing its share button moves the view back to the main window, and sharing then runs as usual. The tool logs `[DOCUMENT_PIP]` lines when Teams requests a window or registers the `enterpictureinpicture` media session action. These lines contain no meeting or user data.
+
+**Configuration**: `media.documentPictureInPicture` (default `true`; set `false` to fall back to Electron's native, broken API)
+**Limitations**: user activation from a click in the popup does not reach the main window, as it does with native PiP, so gesture-gated APIs called from popup buttons (clipboard writes, fullscreen) may be refused. Chrome opens PiP automatically on tab switch through the `enterpictureinpicture` media session action, and Electron has no equivalent trigger. Wayland compositors may not honour always-on-top.
 
 ### UI & Display
 
@@ -154,6 +166,9 @@ Vimium-style keyboard navigation. Lets you drive Teams without a mouse: `f` open
 
 **Configuration**: `vimNavEnabled: true` (default — set to `false` to disable).
 
+#### [integratedTitleBar.js](integratedTitleBar.js)
+The renderer side of `window.titleBar: "integrated"` (client-side decorations). It keeps the controls in the Teams top bar clickable inside the drag region. It reports the bar's height and colour to the main process (`title-bar-overlay-update`). The native window controls are drawn on that colour at zero alpha, so they sit directly on the page while their hover background still matches it. When Teams' own buttons would sit under the window controls, it reserves space for them. On pages with no Teams top bar, such as sign-in, it adds a drag strip along the top and hides the page scrollbar. Needs `ipcRenderer`. The main-process half is `app/mainAppWindow/titleBar.js`.
+
 #### Global Shortcuts System (Main Process)
 System-wide keyboard shortcuts that work even when Teams is not focused. When triggered, the keyboard event is forwarded to Teams, which handles it with its built-in shortcuts. Configured via the `shortcuts.global` array in `config.json` (the flat `globalShortcuts` is deprecated but still accepted).
 
@@ -163,12 +178,12 @@ System-wide keyboard shortcuts that work even when Teams is not focused. When tr
 
 **Common Teams Shortcuts**:
 - `Ctrl+Shift+M` - Toggle mute/unmute
-- `Ctrl+Shift+O` - Toggle video on/off
+- `Ctrl+Shift+O` - Toggle video (Microsoft lists this for the desktop client only)
 - `Ctrl+Shift+H` - Leave/hang up call
 - `Ctrl+Shift+K` - Raise/lower hand
 - `Ctrl+Shift+B` - Toggle background blur
 - `Ctrl+Shift+E` - Start/stop screen sharing
-- `Ctrl+Shift+D` - Toggle chat
+- `Ctrl+Shift+D` - Decline call
 - `Ctrl+Shift+C` - Toggle calendar
 - `Ctrl+Shift+/` - Show keyboard shortcuts
 
@@ -190,7 +205,7 @@ System-wide keyboard shortcuts that work even when Teams is not focused. When tr
 - ⚠️ **macOS**: Non-QWERTY layouts (Dvorak, AZERTY, Colemak, etc.) are **not supported** due to [Electron bug #19747](https://github.com/electron/electron/issues/19747)
 - On Linux/Windows: Works better but may have issues with layout changes during runtime
 
-Set to empty array `[]` or omit from config to disable. See [Electron Accelerators](https://www.electronjs.org/docs/latest/api/accelerator) for key combinations and [Microsoft Teams Keyboard Shortcuts](https://support.microsoft.com/en-us/office/keyboard-shortcuts-for-microsoft-teams-2e8e2a70-e8d8-4a19-949b-4c36dd5292d2) for available Teams shortcuts.
+Set to empty array `[]` or omit from config to disable. See [Electron Accelerators](https://www.electronjs.org/docs/latest/tutorial/keyboard-shortcuts#accelerators) for key combinations and [Microsoft Teams Keyboard Shortcuts](https://support.microsoft.com/en-us/office/keyboard-shortcuts-for-microsoft-teams-2e8e2a70-e8d8-4a19-949b-4c36dd5292d2) for available Teams shortcuts.
 
 #### [tokenCache.js](tokenCache.js)
 Provides authentication token caching and management for improved login persistence.

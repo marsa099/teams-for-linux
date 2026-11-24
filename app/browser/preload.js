@@ -1,4 +1,21 @@
+"use strict";
+// Strict mode is a security boundary here, not style: EventEmitter calls
+// listeners with `this` set to the raw ipcRenderer, and V8's stack-trace API
+// (CallSite.getThis) hands that receiver to page script running inside any
+// sloppy-mode frame. Every file that registers an ipcRenderer listener must be
+// strict (GHSA-58j7-22f8-6xqp; enforced by tests/unit/preloadIpcLeak.test.js).
+
 const { ipcRenderer } = require("electron");
+
+// Must run before any page script probes window.PublicKeyCredential: with no
+// security-key backend, Microsoft's sign-in would offer a key and then hang
+// (see app/webauthn/backendStatus.js). A no-op unless the main process set
+// the flag.
+try {
+  require("./tools/webauthnOverride").neutralizeIfNoBackend();
+} catch (err) {
+  console.error("[WEBAUTHN] Could not hide WebAuthn from the page", { errClass: err?.name });
+}
 
 // #2677: Electron removed the non-standard `File.path` from dropped files, so
 // Teams (which uploads by native path) rejects them as "File is missing data".
@@ -101,12 +118,20 @@ globalThis.electronAPI = {
   sendScreenSharingStopped: () => ipcRenderer.send("screen-sharing-stopped"),
   stopSharing: () => ipcRenderer.send("stop-screen-sharing-from-thumbnail"),
   sendSelectSource: () => ipcRenderer.send("select-source"),
-  onSelectSource: (callback) => ipcRenderer.once("select-source", callback),
-  send: (channel, ...args) => {
-    return ipcRenderer.send(channel, ...args);
+  // Listener helpers return nothing and drop Electron's event: both the
+  // return value of ipcRenderer.on/once and event.sender are the raw
+  // ipcRenderer, which this non-isolated page must never see (GHSA-3vg9-cwq9-p773).
+  onSelectSource: (callback) => {
+    ipcRenderer.once("select-source", (_event, ...args) => callback(...args));
   },
-
-  getConfig: () => ipcRenderer.invoke("get-config"),
+  // No page needs the PiP frame name, so it is not handed out. Defence in
+  // depth only: the name guards against cross-origin frames, which cannot
+  // reach electronAPI anyway (GHSA-58j7-22f8-6xqp).
+  getConfig: async () => {
+    const pageConfig = await ipcRenderer.invoke("get-config");
+    delete pageConfig.documentPictureInPictureFrameName;
+    return pageConfig;
+  },
 
   showNotification: (options) => {
     if (!options || typeof options !== 'object') {
@@ -144,7 +169,7 @@ globalThis.electronAPI = {
       console.error('Invalid callback for theme changed');
       return;
     }
-    return ipcRenderer.on("system-theme-changed", callback);
+    ipcRenderer.on("system-theme-changed", (_event, ...args) => callback(...args));
   },
 
   setUserStatus: (data) => {
@@ -152,19 +177,6 @@ globalThis.electronAPI = {
       return Promise.reject(new Error('Invalid user status data'));
     }
     return ipcRenderer.invoke("user-status-changed", data);
-  },
-
-  getZoomLevel: (partition) => {
-    if (typeof partition !== 'string' || partition.length > 100) {
-      return Promise.reject(new Error('Invalid partition'));
-    }
-    return ipcRenderer.invoke("get-zoom-level", partition);
-  },
-  saveZoomLevel: (data) => {
-    if (!data || typeof data !== 'object' || typeof data.level !== 'number') {
-      return Promise.reject(new Error('Invalid zoom data'));
-    }
-    return ipcRenderer.invoke("save-zoom-level", data);
   },
 
   navigateBack: () => ipcRenderer.send("navigate-back"),
@@ -175,15 +187,7 @@ globalThis.electronAPI = {
       console.error('Invalid callback for navigation state changed');
       return;
     }
-    return ipcRenderer.on("navigation-state-changed", callback);
-  },
-
-  graphApi: {
-    getUserProfile: () => ipcRenderer.invoke("graph-api-get-user-profile"),
-    getCalendarEvents: (options) => ipcRenderer.invoke("graph-api-get-calendar-events", options),
-    getCalendarView: (start, end, options) => ipcRenderer.invoke("graph-api-get-calendar-view", start, end, options),
-    createCalendarEvent: (event) => ipcRenderer.invoke("graph-api-create-calendar-event", event),
-    getMailMessages: (options) => ipcRenderer.invoke("graph-api-get-mail-messages", options),
+    ipcRenderer.on("navigation-state-changed", (_event, ...args) => callback(...args));
   },
 
   openChatWithUser: (email) => {
@@ -205,12 +209,23 @@ globalThis.electronAPI = {
 
 // Config is fetched asynchronously; the Notification override below reads it via closure
 let notificationConfig = null;
+const ProfileNotificationFlags = require("./notifications/profileNotificationFlags");
+const profileFlags = new ProfileNotificationFlags();
+ipcRenderer.on("profile-notification-flags", (_event, flags) => {
+  profileFlags.applyPush(flags);
+});
 ipcRenderer.invoke("get-config").then((config) => {
   notificationConfig = config;
   console.debug("Preload: Config loaded for notifications:", {
     notificationMethod: config?.notificationMethod,
     disableNotifications: config?.disableNotifications
   });
+  // The handler exists only with the multi-account flag on.
+  if (config?.multiAccount?.enabled) {
+    return profileFlags.pull(() =>
+      ipcRenderer.invoke("profile-get-notification-flags")
+    );
+  }
 }).catch((err) => {
   console.error("Preload: Failed to load config for notifications:", err);
 });
@@ -245,6 +260,7 @@ function createNotificationStub() {
 }
 
 function playNotificationSound(notifSound) {
+  if (profileFlags.muted) return;
   // Skip renderer-side sound for "electron" method — the main process
   // notification service already plays the sound before showing the notification.
   const method = notificationConfig?.notificationMethod || "web";
@@ -261,6 +277,28 @@ function playNotificationSound(notifSound) {
   }
 }
 
+// Captured before page script runs: the page shares this JavaScript world
+// and could otherwise intercept the listener below and call it with a forged
+// event.
+const nativeAddEventListener = EventTarget.prototype.addEventListener;
+const reflectApply = Reflect.apply;
+
+// Multi-account: a click on a Chromium toast never reaches main, so report it
+// and let main bring this profile forward. isTrusted is unforgeable, which
+// keeps a page from switching profiles by dispatching a synthetic click.
+function reportWebNotificationClicks(notification) {
+  // The flag is read at click time, not here: config loads asynchronously,
+  // and a toast raised before it arrived must still route when clicked.
+  reflectApply(nativeAddEventListener, notification, [
+    "click",
+    (event) => {
+      if (event.isTrusted && notificationConfig?.multiAccount?.enabled) {
+        ipcRenderer.send("notification-web-clicked");
+      }
+    },
+  ]);
+}
+
 function createWebNotification(classicNotification, title, options) {
   const notifSound = {
     type: options.type,
@@ -274,7 +312,9 @@ function createWebNotification(classicNotification, title, options) {
   console.debug("Continues to default notification workflow");
   if (classicNotification) {
     try {
-      return new classicNotification(title, options);
+      const notification = new classicNotification(title, options);
+      reportWebNotificationClicks(notification);
+      return notification;
     } catch (err) {
       console.debug("Could not create native notification:", err);
       return null;
@@ -354,8 +394,18 @@ function createCustomNotification(title, options) {
       // Return dummy object to avoid Teams errors
       return { onclick: null, onclose: null, onerror: null };
     }
+    // A full stub, not the bare object above: this profile can be switched
+    // back on mid-session, and Teams stops notifying for good once its
+    // lifecycle calls fail on a returned object.
+    if (profileFlags.disableNotifications) {
+      return createNotificationStub();
+    }
 
-    options = options || {};
+    // A copy: Teams may reuse its options object, and a profile-derived
+    // `silent` must not outlive the mute.
+    options = { ...options };
+    // Covers the OS sound of web toasts and, via main, electron toasts.
+    if (profileFlags.muted) options.silent = true;
     options.icon = options.icon || ICON_BASE64;
     options.title = options.title || title;
     options.type = options.type || "new-message";
@@ -371,12 +421,14 @@ function createCustomNotification(title, options) {
     // Default to "web" if config not loaded yet
     const method = notificationConfig?.notificationMethod || "web";
 
+    // options.title already prefers the sender over the page title (see
+    // above); web and custom need it too, or they show the open chat (#2768).
     if (method === "custom") {
-      return createCustomNotification(title, options);
+      return createCustomNotification(options.title, options);
     }
 
     if (method === "web") {
-      const notification = createWebNotification(classicNotification, title, options);
+      const notification = createWebNotification(classicNotification, options.title, options);
       return notification || { onclick: null, onclose: null, onerror: null };
     }
 
@@ -397,7 +449,14 @@ function createCustomNotification(title, options) {
   console.debug("Preload: CustomNotification factory initialized");
 })();
 
-document.addEventListener('DOMContentLoaded', async () => {
+// Page script shares this world and can dispatch its own DOMContentLoaded, so
+// only the browser's event may run init, and only once: each run hands the raw
+// ipcRenderer to the modules again (GHSA-58j7-22f8-6xqp). A flag rather than
+// `once`, so a synthetic event fired first cannot use up the listener.
+let browserModulesStarted = false;
+document.addEventListener('DOMContentLoaded', async (event) => {
+  if (!event.isTrusted || browserModulesStarted) return;
+  browserModulesStarted = true;
   console.debug("Preload: DOMContentLoaded, initializing browser modules...");
   try {
     const config = await ipcRenderer.invoke("get-config");
@@ -414,39 +473,47 @@ document.addEventListener('DOMContentLoaded', async () => {
     // NOTE: the unread-count event is handled by trayIconRenderer.js; a second
     // listener here previously caused duplicate IPC traffic and rendering.
 
+    // CRITICAL: `ipc: true` modules need ipcRenderer for IPC communication;
+    // trayIconRenderer and mqttStatusMonitor must keep it (see AGENTS.md, #1902).
+    // Every entry sets `ipc` itself: a missing own property would be read from
+    // Object.prototype, which page script controls.
     const modules = [
-      { name: "zoom", path: "./tools/zoom" },
-      { name: "shortcuts", path: "./tools/shortcuts" },
-      { name: "settings", path: "./tools/settings" },
-      { name: "theme", path: "./tools/theme" },
-      { name: "emulatePlatform", path: "./tools/emulatePlatform" },
-      { name: "webauthnOverride", path: "./tools/webauthnOverride" },
-      { name: "timestampCopyOverride", path: "./tools/timestampCopyOverride" },
-      { name: "trayIconRenderer", path: "./tools/trayIconRenderer" },
-      { name: "mqttStatusMonitor", path: "./tools/mqttStatusMonitor" },
-      { name: "meetingStartDetector", path: "./tools/meetingStartDetector" },
-      { name: "overrideMicConstraints", path: "./tools/overrideMicConstraints" },
-      { name: "disableAutogain", path: "./tools/disableAutogain" },
-      { name: "ignoreSystemMute", path: "./tools/ignoreSystemMute" },
-      { name: "speakingIndicator", path: "./tools/speakingIndicator" },
-      { name: "cameraResolution", path: "./tools/cameraResolution" },
-      { name: "cameraAspectRatio", path: "./tools/cameraAspectRatio" },
-      { name: "navigationButtons", path: "./tools/navigationButtons" },
-      { name: "framelessTweaks", path: "./tools/frameless" },
-      { name: "vimNav", path: "./tools/vimNav" },
-      { name: "customStickers", path: "./tools/customStickers" },
-      { name: "dockIconRenderer", path: "./tools/dockIconRenderer" },
-      { name: "preventDeviceSwitching", path: "./tools/preventDeviceSwitching" }
+      { name: "zoom", path: "./tools/zoom", ipc: false },
+      { name: "shortcuts", path: "./tools/shortcuts", ipc: false },
+      { name: "settings", path: "./tools/settings", ipc: true },
+      { name: "theme", path: "./tools/theme", ipc: true },
+      { name: "emulatePlatform", path: "./tools/emulatePlatform", ipc: false },
+      { name: "webauthnOverride", path: "./tools/webauthnOverride", ipc: true },
+      { name: "timestampCopyOverride", path: "./tools/timestampCopyOverride", ipc: false },
+      { name: "trayIconRenderer", path: "./tools/trayIconRenderer", ipc: true },
+      { name: "mqttStatusMonitor", path: "./tools/mqttStatusMonitor", ipc: true },
+      { name: "meetingStartDetector", path: "./tools/meetingStartDetector", ipc: true },
+      { name: "overrideMicConstraints", path: "./tools/overrideMicConstraints", ipc: false },
+      { name: "disableAutogain", path: "./tools/disableAutogain", ipc: false },
+      { name: "ignoreSystemMute", path: "./tools/ignoreSystemMute", ipc: false },
+      { name: "speakingIndicator", path: "./tools/speakingIndicator", ipc: true },
+      { name: "callParticipants", path: "./tools/callParticipants", ipc: true },
+      { name: "cameraResolution", path: "./tools/cameraResolution", ipc: false },
+      { name: "cameraAspectRatio", path: "./tools/cameraAspectRatio", ipc: false },
+      { name: "navigationButtons", path: "./tools/navigationButtons", ipc: false },
+      { name: "framelessTweaks", path: "./tools/frameless", ipc: false },
+      { name: "vimNav", path: "./tools/vimNav", ipc: false },
+      { name: "integratedTitleBar", path: "./tools/integratedTitleBar", ipc: true },
+      { name: "customStickers", path: "./tools/customStickers", ipc: true },
+      { name: "dockIconRenderer", path: "./tools/dockIconRenderer", ipc: true },
+      { name: "preventDeviceSwitching", path: "./tools/preventDeviceSwitching", ipc: false },
+      { name: "documentPictureInPicture", path: "./tools/documentPictureInPicture", ipc: false }
     ];
 
-    // CRITICAL: These modules need ipcRenderer for IPC communication (see CLAUDE.md)
-    const modulesRequiringIpc = new Set(["settings", "theme", "trayIconRenderer", "mqttStatusMonitor", "meetingStartDetector", "webauthnOverride", "speakingIndicator", "customStickers", "dockIconRenderer"]);
-
+    // An indexed loop over own properties, not for...of or Set.has: page script
+    // runs before this event and can patch the shared Array and Set built-ins
+    // to swap entries or flags while ipcRenderer is being handed out.
     let successCount = 0;
-    for (const module of modules) {
+    for (let i = 0; i < modules.length; i++) {
+      const module = modules[i];
       try {
         const moduleInstance = require(module.path);
-        if (modulesRequiringIpc.has(module.name)) {
+        if (module.ipc === true) {
           moduleInstance.init(config, ipcRenderer);
         } else {
           moduleInstance.init(config);

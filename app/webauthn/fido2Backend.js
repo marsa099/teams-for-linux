@@ -14,6 +14,7 @@ const { promisify } = require("node:util");
 const { encode: cborEncode, decode: cborDecode } = require("cbor-x");
 const { base64urlEncode, base64urlDecode, generateClientDataJSON, sanitizeForFido2 } = require("./helpers");
 const log = require("./log");
+const { hasFido2Tools } = require("./backendStatus");
 
 const execFileAsync = promisify(execFile);
 
@@ -23,6 +24,9 @@ const execFileAsync = promisify(execFile);
  * failure, so that a cancel is not reported to the page as a broken key.
  */
 const CANCELLED_MESSAGE = "NotAllowedError: security key operation cancelled";
+
+/** Rejection message when no security key is plugged in. */
+const NO_DEVICE_MESSAGE = "NotAllowedError: No FIDO2 hardware device found. Plug in your security key and try again.";
 
 /**
  * Reject a cancelled request before it does any further work.
@@ -175,28 +179,13 @@ function spawnFido2(cmd, args, inputLines, timeoutMs, pin, signal) {
 }
 
 /**
- * Check if a command exists on the system PATH.
- */
-async function commandExists(cmd) {
-  try {
-    await execFileAsync("which", [cmd]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Check if all three fido2-tools binaries are available.
+ * Check if all three fido2-tools binaries are available. Uses the same PATH
+ * check as the renderer gate (backendStatus.js), so the page is never offered
+ * a security key that these handlers would not be registered to answer.
  * @returns {Promise<boolean>}
  */
 async function isAvailable() {
-  const [hasCred, hasAssert, hasToken] = await Promise.all([
-    commandExists("fido2-cred"),
-    commandExists("fido2-assert"),
-    commandExists("fido2-token"),
-  ]);
-  return hasCred && hasAssert && hasToken;
+  return hasFido2Tools();
 }
 
 /**
@@ -231,7 +220,7 @@ async function discoverDevices() {
 async function resolveDevice() {
   const devices = await discoverDevices();
   if (devices.length === 0) {
-    throw new Error("NotAllowedError: No FIDO2 hardware device found. Plug in your security key and try again.");
+    throw new Error(NO_DEVICE_MESSAGE);
   }
   return devices[0];
 }
@@ -702,7 +691,7 @@ function parseAssertionOutput(stdout, options, clientDataJSON, credentialId) {
   };
 }
 
-module.exports = { isAvailable, discoverDevices, createCredential, getAssertion, CANCELLED_MESSAGE };
+module.exports = { isAvailable, discoverDevices, createCredential, getAssertion, CANCELLED_MESSAGE, NO_DEVICE_MESSAGE };
 
 // Exposed so the cancellation path can be unit-tested against a real detached
 // child process. Not part of the module's contract — do not use from app code.

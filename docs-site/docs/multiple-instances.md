@@ -27,12 +27,12 @@ With the flag on, a **Profiles** menu appears in the application menu:
 
 - **Add profile…** — create a new account profile (name, optional custom URL, optional avatar initials and color).
 - **Switch to** — jump between profiles; each runs in its own isolated session (`persist:teams-profile-{uuid}`), so cookies, tokens, and storage never cross tenants.
-- **Manage profiles…** — rename or remove existing profiles.
+- **Manage profiles…** — rename or remove existing profiles, and turn each profile's **Notifications** and **Sound** on or off. A profile with notifications off still counts its unread in the tray badge and the switcher.
 
 On first launch after enabling the flag, your existing session is migrated into a default **"My account"** profile, so you stay logged in with no re-authentication.
 
 :::note
-This feature is under active development. Switch via the **bottom-left avatar pill**, the **Profiles** menu, or — after pinning a profile in **Manage profiles…** — the `Ctrl+Alt+1…5` keyboard shortcuts (up to 5 pinned profiles, slotted in list order; active while the app is focused; Linux/Windows). The switcher is mutually exclusive with Intune SSO (`auth.intune.enabled`) — see [Configuration](configuration.md#multi-account-profile-switcher-experimental). For the full design and roadmap, see [ADR-020](development/adr/020-multi-account-profile-switcher).
+This feature is under active development. The tray badge and dock count aggregate across profiles (total unread, tooltip lists the top profiles), and a red dot on the switcher pill marks unread in another profile, with per-profile counts in its dropdown. Clicking a notification switches to the profile it came from. Switch via the **bottom-left avatar pill**, the **Profiles** menu, or — after pinning a profile in **Manage profiles…** — the `Ctrl+Alt+1…5` keyboard shortcuts (up to 5 pinned profiles, slotted in list order; active while the app is focused; Linux/Windows). The switcher is mutually exclusive with Intune SSO (`auth.intune.enabled`) — see [Configuration](configuration.md#multi-account-profile-switcher-experimental). For the full design and roadmap, see [ADR-020](development/adr/020-multi-account-profile-switcher).
 :::
 
 ## Separate Isolated Instances (Command Line)
@@ -44,16 +44,16 @@ The rest of this page covers the separate-instances approach: one process per ac
 ### Work Profile
 ```bash
 ./teams-for-linux \
-  --appIcon=/path/to/work-icon.png \
-  --class=teams-work \
+  --tray.icon=/path/to/work-icon.png \
+  --window.class=teams-work \
   --user-data-dir=/home/user/.config/teams-profile-work
 ```
 
 ### Personal Profile
 ```bash
 ./teams-for-linux \
-  --appIcon=/path/to/personal-icon.png \
-  --class=teams-personal \
+  --tray.icon=/path/to/personal-icon.png \
+  --window.class=teams-personal \
   --user-data-dir=/home/user/.config/teams-profile-personal
 ```
 
@@ -63,32 +63,34 @@ Replace the `user-data-dir` with the full path where you want to store the profi
 
 ## Command Line Options
 
-### `--appIcon`
+The options below use the nested names from the [configuration reference](configuration.md). The older flat spellings (`--appIcon`, `--appTitle`, `--class`, `--url`) still work until their scheduled removal (tracked in [#2842](https://github.com/IsmaelMartinez/teams-for-linux/issues/2842)) but print a Configuration Warning at startup, so update any `.desktop` files or scripts that use them.
+
+### `--tray.icon`
 
 Set a custom tray and window icon for each profile:
 
 ```bash
---appIcon=/path/to/icon.png
+--tray.icon=/path/to/icon.png
 ```
 
 This changes the visual icon used in the title bar and system tray/dock, making it easy to distinguish between different profiles.
 
-### `--appTitle`
+### `--app.title`
 
 Label each profile's window and tray tooltip:
 
 ```bash
---appTitle="Teams - Work"
+--app.title="Teams - Work"
 ```
 
-Any value other than the default replaces "Microsoft Teams" at the end of the window title (for example `Chat | Teams - Work`), so taskbars and Alt+Tab show which profile a window belongs to. In `config.json` the same setting is `app.title`.
+Any value other than the default replaces "Microsoft Teams" at the end of the window title (for example `Chat | Teams - Work`), so taskbars and Alt+Tab show which profile a window belongs to. The same setting is `app.title` in `config.json`.
 
-### `--class`
+### `--window.class`
 
 Set the internal application name used by Electron:
 
 ```bash
---class=teams-work
+--window.class=teams-work
 ```
 
 This affects:
@@ -130,7 +132,9 @@ Each profile can have its own `config.json` file in its respective user data dir
   "tray": {
     "iconType": "dark"
   },
-  "disableNotificationSound": false,
+  "notifications": {
+    "sound": { "enabled": true }
+  },
   "appearance": {
     "cssName": "compactDark"
   },
@@ -149,7 +153,9 @@ Each profile can have its own `config.json` file in its respective user data dir
   "tray": {
     "iconType": "light"
   },
-  "disableNotificationSound": true,
+  "notifications": {
+    "sound": { "enabled": false }
+  },
   "appearance": {
     "cssName": "compactLight"
   },
@@ -168,7 +174,7 @@ Each profile can have its own `config.json` file in its respective user data dir
 [Desktop Entry]
 Name=Teams for Linux (Work)
 Comment=Microsoft Teams for Linux - Work Profile
-Exec=/path/to/teams-for-linux --class=teams-work --user-data-dir=%h/.config/teams-profile-work --appIcon=%h/.local/share/icons/teams-work.png
+Exec=/path/to/teams-for-linux --window.class=teams-work --user-data-dir=%h/.config/teams-profile-work --tray.icon=%h/.local/share/icons/teams-work.png
 Icon=teams-work
 Terminal=false
 Type=Application
@@ -181,7 +187,7 @@ StartupWMClass=teams-work
 [Desktop Entry]
 Name=Teams for Linux (Personal)
 Comment=Microsoft Teams for Linux - Personal Profile
-Exec=/path/to/teams-for-linux --class=teams-personal --user-data-dir=%h/.config/teams-profile-personal --appIcon=%h/.local/share/icons/teams-personal.png
+Exec=/path/to/teams-for-linux --window.class=teams-personal --user-data-dir=%h/.config/teams-profile-personal --tray.icon=%h/.local/share/icons/teams-personal.png
 Icon=teams-personal
 Terminal=false
 Type=Application
@@ -195,9 +201,9 @@ StartupWMClass=teams-personal
 ```bash
 #!/bin/bash
 /path/to/teams-for-linux \
-  --class=teams-work \
+  --window.class=teams-work \
   --user-data-dir="$HOME/.config/teams-profile-work" \
-  --appIcon="$HOME/.local/share/icons/teams-work.png" \
+  --tray.icon="$HOME/.local/share/icons/teams-work.png" \
   "$@"
 ```
 
@@ -205,9 +211,9 @@ StartupWMClass=teams-personal
 ```bash
 #!/bin/bash
 /path/to/teams-for-linux \
-  --class=teams-personal \
+  --window.class=teams-personal \
   --user-data-dir="$HOME/.config/teams-profile-personal" \
-  --appIcon="$HOME/.local/share/icons/teams-personal.png" \
+  --tray.icon="$HOME/.local/share/icons/teams-personal.png" \
   "$@"
 ```
 
@@ -220,15 +226,15 @@ For users managing multiple organizations:
 ```bash
 # Organization A
 ./teams-for-linux \
-  --class=teams-org-a \
+  --window.class=teams-org-a \
   --user-data-dir="$HOME/.config/teams-org-a" \
-  --appTitle="Teams - Org A"
+  --app.title="Teams - Org A"
 
 # Organization B  
 ./teams-for-linux \
-  --class=teams-org-b \
+  --window.class=teams-org-b \
   --user-data-dir="$HOME/.config/teams-org-b" \
-  --appTitle="Teams - Org B"
+  --app.title="Teams - Org B"
 ```
 
 ### Development vs Production
@@ -238,15 +244,15 @@ For developers working with different Teams environments:
 ```bash
 # Production environment
 ./teams-for-linux \
-  --class=teams-prod \
+  --window.class=teams-prod \
   --user-data-dir="$HOME/.config/teams-production" \
-  --url="https://teams.cloud.microsoft"
+  --app.url="https://teams.cloud.microsoft"
 
 # Development/Test environment
 ./teams-for-linux \
-  --class=teams-dev \
+  --window.class=teams-dev \
   --user-data-dir="$HOME/.config/teams-development" \
-  --url="https://teams-dev.company.com"
+  --app.url="https://teams-dev.company.com"
 ```
 
 ## Best Practices
@@ -282,7 +288,7 @@ $HOME/.config/
 
 ### Profiles Not Isolated
 - **Check user-data-dir**: Ensure each profile uses a different directory
-- **Verify class names**: Different `--class` values help window managers distinguish instances
+- **Verify class names**: Different `--window.class` values help window managers distinguish instances
 - **Clear conflicting cache**: Remove cache if profiles seem to share data
 
 ### Icons Not Showing
@@ -294,6 +300,10 @@ $HOME/.config/
 - **Verify config location**: Ensure `config.json` is in the correct profile directory
 - **JSON syntax**: Validate JSON syntax using `jq` or online validators
 - **File permissions**: Ensure config files are readable by the application
+
+## Community Tools
+
+- [teams-for-linux-multiclient](https://github.com/JamesStuder/teams-for-linux-multiclient) (KDE Plasma 6): runs one isolated instance per tenant using the `--class` and `--user-data-dir` options above, and replaces the per-instance tray icons with a single icon that shows the combined unread count and a submenu per instance. Not maintained by this project.
 
 ## Related Documentation
 

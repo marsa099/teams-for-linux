@@ -17,16 +17,32 @@ const mapPath = require.resolve('../../app/mainAppWindow/senderProfileMap');
 let nextWcId;
 let createdViews;
 let partitionSessions; // partition → { clearCalls }
+let ipcHandlers; // channel → ipcMain.handle handler
 
 class FakeWebContents {
   constructor() {
     this.id = nextWcId++;
-    this.session = { clearStorageData: async () => {} };
+    const cookieListeners = [];
+    this.session = {
+      clearStorageData: async () => {},
+      cookies: {
+        listeners: cookieListeners,
+        on(event, cb) {
+          cookieListeners.push({ event, cb });
+        },
+      },
+    };
     this._once = {};
     this._on = {};
     this._destroyed = false;
   }
-  loadURL() {}
+  loadURL(...args) {
+    (this.loads ||= []).push(args);
+    return Promise.resolve();
+  }
+  getURL() {
+    return this.url || 'https://teams.cloud.microsoft/';
+  }
   async loadFile() {}
   on(event, cb) {
     (this._on[event] ||= []).push(cb);
@@ -44,11 +60,21 @@ class FakeWebContents {
   }
   removeListener() {}
   send() {}
+  getTitle() {
+    return this.title ?? '';
+  }
+  focus() {
+    this.focusCalls = (this.focusCalls || 0) + 1;
+  }
   isDestroyed() {
     return this._destroyed;
   }
   close() {
     this.closed = true;
+    // Model Electron: closing a webContents destroys it, so the production
+    // 'destroyed' listener runs on the removal path too. Synchronous here —
+    // stricter than Electron's async delivery, which catches reentrancy.
+    this.emitOnce('destroyed');
   }
 }
 
@@ -59,6 +85,9 @@ class FakeWebContentsView {
   }
   setBounds() {}
   setBackgroundColor() {}
+  setVisible(visible) {
+    this.visible = visible;
+  }
   // Mirror Electron's observed behaviour when a page destroys its own
   // webContents: the `destroyed` handlers fire and afterwards the view's
   // `webContents` accessor no longer returns a usable object. Any production
@@ -91,7 +120,9 @@ function installElectronMock() {
         },
       },
       ipcMain: {
-        handle() {},
+        handle(channel, handler) {
+          ipcHandlers[channel] = handler;
+        },
         on() {},
         removeHandler() {},
         removeListener() {},
@@ -103,11 +134,33 @@ function installElectronMock() {
 function fakeWindow() {
   return {
     webContents: new FakeWebContents(),
-    on() {},
+    listeners: {},
+    on(event, cb) {
+      (this.listeners[event] ||= []).push(cb);
+    },
+    emit(event) {
+      for (const cb of this.listeners[event] || []) cb();
+    },
     once() {},
-    removeListener() {},
+    removeListener(event, cb) {
+      this.listeners[event] = (this.listeners[event] || []).filter((l) => l !== cb);
+    },
+    focused: true,
+    isFocused() {
+      return this.focused;
+    },
     getContentSize: () => [1200, 800],
-    contentView: { addChildView() {}, removeChildView() {} },
+    contentView: {
+      attached: new Set(),
+      removed: [],
+      addChildView(view) {
+        this.attached.add(view);
+      },
+      removeChildView(view) {
+        this.attached.delete(view);
+        this.removed.push(view);
+      },
+    },
   };
 }
 
@@ -145,6 +198,7 @@ beforeEach(() => {
   nextWcId = 100;
   createdViews = [];
   partitionSessions = {};
+  ipcHandlers = {};
   installElectronMock();
   delete require.cache[pvmPath];
   delete require.cache[mapPath];
@@ -172,6 +226,26 @@ function build(profiles, bindWindowOpenHandler) {
 }
 
 describe('ProfileViewManager sender attribution wiring', () => {
+  it('returns root contents for legacy and active view contents for another profile', () => {
+    const { win, pm, pvm } = build([LEGACY, PROFILE_A]);
+    assert.strictEqual(pvm.getActiveWebContents(), win.webContents);
+    pm.switch(PROFILE_A.id);
+    assert.strictEqual(pvm.getActiveWebContents(), createdViews[0].webContents);
+  });
+
+  it('fails closed when the selected non-legacy renderer is destroyed', () => {
+    const { pm, pvm } = build([LEGACY, PROFILE_A]);
+    pm.switch(PROFILE_A.id);
+    createdViews[0].destroyWebContents();
+    assert.strictEqual(pvm.getActiveWebContents(), null);
+  });
+
+  it('returns null when neither selected profile contents nor root is live', () => {
+    const { win, pvm } = build([LEGACY]);
+    win.webContents._destroyed = true;
+    assert.strictEqual(pvm.getActiveWebContents(), null);
+  });
+
   it('resolves the root window to the legacy profile after initialize', () => {
     const { win, pvm } = build([LEGACY, PROFILE_A]);
     assert.strictEqual(pvm.resolveProfileId(win.webContents), 'profile-0');
@@ -252,6 +326,26 @@ describe('ProfileViewManager sender attribution wiring', () => {
     );
   });
 
+  // #3183: dispose() runs on every window close, so clearing there signed
+  // every secondary profile out on each restart.
+  it('dispose keeps profile storage; only removing a profile clears it', () => {
+    const { pm, pvm } = build([LEGACY, PROFILE_A, PROFILE_B]);
+    pm.emit('remove', { removedId: 'profile-b', activeId: 'profile-0' });
+    pvm.dispose();
+    assert.strictEqual(partitionSessions['persist:teams-profile-a']?.clearCalls ?? 0, 0);
+    assert.strictEqual(partitionSessions['persist:teams-profile-b'].clearCalls, 1);
+  });
+
+  it('keeps msal.cache.encryption persistent on each profile view session (#3183)', () => {
+    build([LEGACY, PROFILE_A, PROFILE_B]);
+    // createdViews also holds the switcher chrome view, which hosts no account.
+    const counts = createdViews.map(
+      (view) => view.webContents.session.cookies.listeners.filter((l) => l.event === 'changed').length
+    );
+    assert.strictEqual(counts.filter((n) => n === 1).length, 2, 'one listener per profile view');
+    assert.ok(counts.every((n) => n <= 1), 'never wired twice');
+  });
+
   it('dispose after a self-destroyed view does not throw and completes cleanup', () => {
     const { win, pvm } = build([LEGACY, PROFILE_A]);
     createdViews[0].destroyWebContents();
@@ -327,6 +421,33 @@ describe('ProfileViewManager sender attribution wiring', () => {
     ]);
   });
 
+  it('locks the Document PiP window instead of giving it the profile policy', () => {
+    const { PIP_FRAME_NAME } = require('../../app/mainAppWindow/documentPictureInPicture');
+    const bound = [];
+    const win = fakeWindow();
+    const pvm = new ProfileViewManager(
+      win,
+      fakeProfilesManager([LEGACY, PROFILE_A]),
+      { url: 'https://teams.cloud.microsoft', media: { documentPictureInPicture: true } },
+      () => {},
+      (target) => bound.push(target)
+    );
+    pvm.initialize();
+    const view = createdViews[0];
+    const pip = { webContents: new FakeWebContents() };
+    pip.webContents.setWindowOpenHandler = (fn) => { pip.openHandler = fn; };
+    view.webContents.emit('did-create-window', pip, { url: 'about:blank', frameName: PIP_FRAME_NAME });
+    assert.ok(!bound.includes(pip.webContents), 'PiP window must not get the profile policy');
+    assert.deepStrictEqual(pip.openHandler({ url: 'https://example.com/' }), { action: 'deny' });
+    assert.strictEqual(pip.webContents._on['will-navigate'].length, 1);
+    // Still attributed to its profile.
+    assert.strictEqual(pvm.resolveProfileId(pip.webContents), 'profile-a');
+    // Any other popup keeps the profile policy.
+    const other = { webContents: new FakeWebContents() };
+    view.webContents.emit('did-create-window', other, { url: 'about:blank', frameName: '' });
+    assert.ok(bound.includes(other.webContents));
+  });
+
   it('a deep link loaded from a background profile activates that profile', () => {
     let activateFn = null;
     const { pm } = build([LEGACY, PROFILE_A], (_t, _l, activate) => {
@@ -385,6 +506,42 @@ describe('ProfileViewManager sender attribution wiring', () => {
     assert.strictEqual(pvm.resolveProfileId(child.webContents), null);
   });
 
+  it('isPrimaryProfileSurface: true for root and profile views, false for pill, descendants, and dead views', () => {
+    const { win, pvm } = build([LEGACY, PROFILE_A]);
+    const profileView = createdViews[0];
+    const pillView = createdViews[createdViews.length - 1];
+    const popup = { webContents: new FakeWebContents() };
+    profileView.webContents.emit('did-create-window', popup);
+
+    const eventFor = (wc) => ({ sender: { id: wc.id } });
+    assert.strictEqual(pvm.isPrimaryProfileSurface(eventFor(win.webContents)), true);
+    assert.strictEqual(pvm.isPrimaryProfileSurface(eventFor(profileView.webContents)), true);
+    assert.strictEqual(pvm.isPrimaryProfileSurface(eventFor(pillView.webContents)), false);
+    // The popup attributes to the profile but is NOT a primary surface.
+    assert.strictEqual(pvm.resolveProfileId(popup.webContents), 'profile-a');
+    assert.strictEqual(pvm.isPrimaryProfileSurface(eventFor(popup.webContents)), false);
+    assert.strictEqual(pvm.isPrimaryProfileSurface({}), false);
+    // A self-destroyed view keeps its #viewMeta (for removal's storage
+    // clear) but must NOT stay primary — a stale primary would let its
+    // stashed pre-attach update replay into an unremovable bucket.
+    const deadWc = profileView.destroyWebContents();
+    assert.strictEqual(pvm.isPrimaryProfileSurface(eventFor(deadWc)), false);
+  });
+
+  it('onProfileViewGone fires when a view self-destroys, not on profile removal', () => {
+    const { pm, pvm } = build([LEGACY, PROFILE_A, PROFILE_B]);
+    const gone = [];
+    pvm.onProfileViewGone((profileId) => gone.push(profileId));
+    createdViews[0].destroyWebContents(); // PROFILE_A's view dies on its own
+    assert.deepStrictEqual(gone, ['profile-a']);
+    // Removal closes the view's webContents, which DOES fire 'destroyed'
+    // (the fake models that) — but the removal path must stay silent here:
+    // it is already observable via ProfilesManager's "remove" event.
+    pm.emit('remove', { removedId: 'profile-b', activeId: 'profile-0' });
+    assert.strictEqual(createdViews[1].webContents.closed, true);
+    assert.deepStrictEqual(gone, ['profile-a']);
+  });
+
   it('dispose clears all attribution including the root window', () => {
     const { win, pvm } = build([LEGACY, PROFILE_A]);
     const profileView = createdViews[0];
@@ -422,5 +579,256 @@ describe('ProfileViewManager per-view load hook (#2979)', () => {
       viewB.webContents,
       viewA.webContents,
     ]);
+  });
+
+  it('loads the profile URL again instead of the load hook when a view lands on the signed-out page', () => {
+    const loaded = [];
+    const pvm = new ProfileViewManager(
+      fakeWindow(),
+      fakeProfilesManager([LEGACY, PROFILE_A]),
+      { url: 'https://teams.cloud.microsoft', chromeUserAgent: 'UA' },
+      () => {},
+      () => {},
+      (webContents) => loaded.push(webContents)
+    );
+    pvm.initialize();
+    const [viewA] = createdViews;
+
+    viewA.webContents.url = 'https://login.microsoftonline.com/common/oauth2/v2.0/logout?x=1';
+    viewA.webContents.emit('did-finish-load');
+
+    assert.deepStrictEqual(loaded, []);
+    assert.deepStrictEqual(viewA.webContents.loads.at(-1), [
+      PROFILE_A.url || 'https://teams.cloud.microsoft',
+      { userAgent: 'UA' },
+    ]);
+  });
+});
+
+// GHSA-58j7-22f8-6xqp: a profile URL stored before https was enforced must
+// not load with the full preload.
+describe('ProfileViewManager ignores stored non-https profile URLs', () => {
+  it('loads the Teams URL instead, on first load and on the signed-out reload', () => {
+    const stale = { ...PROFILE_A, url: 'http://evil.example/' };
+    const custom = { ...PROFILE_B, url: 'https://tenant.example/' };
+    const pvm = new ProfileViewManager(
+      fakeWindow(),
+      fakeProfilesManager([LEGACY, stale, custom]),
+      { url: 'https://teams.cloud.microsoft', chromeUserAgent: 'UA' },
+      () => {},
+      () => {}
+    );
+    pvm.initialize();
+    const [viewA, viewB] = createdViews;
+
+    assert.strictEqual(viewA.webContents.loads[0][0], 'https://teams.cloud.microsoft');
+    assert.strictEqual(viewB.webContents.loads[0][0], 'https://tenant.example/');
+
+    viewA.webContents.url = 'https://login.microsoftonline.com/common/oauth2/v2.0/logout?x=1';
+    viewA.webContents.emit('did-finish-load');
+    assert.strictEqual(viewA.webContents.loads.at(-1)[0], 'https://teams.cloud.microsoft');
+  });
+});
+
+// #3057: on Linux a profile view that loads while detached and is attached
+// later paints but never receives input. Views are therefore attached at
+// creation and a switch only toggles visibility; nothing is detached.
+describe('ProfileViewManager keeps profile views attached (#3057)', () => {
+  it('attaches every profile view at creation, visible only when active', () => {
+    const { win } = build([PROFILE_A, PROFILE_B]);
+    const [viewA, viewB] = createdViews;
+    assert.ok(win.contentView.attached.has(viewA));
+    assert.ok(win.contentView.attached.has(viewB));
+    assert.strictEqual(viewA.visible, true);
+    assert.strictEqual(viewB.visible, false);
+  });
+
+  it('switches by toggling visibility and focusing, never by detaching', () => {
+    const { win, pm } = build([LEGACY, PROFILE_A, PROFILE_B]);
+    const [viewA, viewB] = createdViews;
+
+    pm.switch('profile-b');
+    assert.strictEqual(viewB.visible, true);
+    assert.strictEqual(viewA.visible, false);
+    assert.ok(viewB.webContents.focusCalls >= 1);
+
+    pm.switch('profile-0');
+    assert.strictEqual(viewA.visible, false);
+    assert.strictEqual(viewB.visible, false);
+    assert.ok(win.webContents.focusCalls >= 1);
+
+    pm.switch('profile-a');
+    assert.strictEqual(viewA.visible, true);
+    assert.deepStrictEqual(win.contentView.removed, []);
+  });
+
+  it('focuses the active view when its page loads, but not a background one', () => {
+    build([PROFILE_A, PROFILE_B]);
+    const [viewA, viewB] = createdViews;
+    const before = viewA.webContents.focusCalls || 0;
+    viewA.webContents.emit('did-finish-load');
+    viewB.webContents.emit('did-finish-load');
+    assert.strictEqual(viewA.webContents.focusCalls, before + 1);
+    assert.strictEqual(viewB.webContents.focusCalls || 0, 0);
+  });
+
+  // #3064: a window focus-in (e.g. a keyboard layout switch on X11) must not
+  // leave keyboard focus on the root webContents (Profile 0).
+  it('refocuses the active profile when the window regains focus, unless the switcher is open', () => {
+    const { win, pm } = build([LEGACY, PROFILE_A, PROFILE_B]);
+    const [, viewB] = createdViews;
+    const chrome = createdViews.at(-1);
+    pm.switch('profile-b');
+    const before = viewB.webContents.focusCalls;
+
+    win.emit('focus');
+    assert.strictEqual(viewB.webContents.focusCalls, before + 1);
+
+    ipcHandlers['profile-switcher-set-expanded']({ sender: chrome.webContents }, true);
+    win.emit('focus');
+    assert.strictEqual(viewB.webContents.focusCalls, before + 1);
+  });
+
+  it('refocuses the active view when the switcher closes, only while the window is focused', () => {
+    const { win } = build([PROFILE_A, PROFILE_B]);
+    const [viewA] = createdViews;
+    const chrome = createdViews.at(-1);
+    const setExpanded = ipcHandlers['profile-switcher-set-expanded'];
+    const event = { sender: chrome.webContents };
+
+    setExpanded(event, true);
+    const before = viewA.webContents.focusCalls || 0;
+    viewA.webContents.emit('did-finish-load');
+    assert.strictEqual(viewA.webContents.focusCalls || 0, before);
+
+    setExpanded(event, false);
+    assert.strictEqual(viewA.webContents.focusCalls, before + 1);
+
+    win.focused = false;
+    setExpanded(event, true);
+    setExpanded(event, false);
+    assert.strictEqual(viewA.webContents.focusCalls, before + 1);
+  });
+
+  it('detaches a profile view whose page destroyed its own webContents', () => {
+    const { win } = build([PROFILE_A, PROFILE_B]);
+    const [, viewB] = createdViews;
+    viewB.destroyWebContents();
+    assert.ok(!win.contentView.attached.has(viewB));
+  });
+
+  it('turns off focus-on-navigation so a background profile cannot take focus', () => {
+    const source = require('node:fs').readFileSync(pvmPath, 'utf8');
+    assert.match(source, /focusOnNavigation:\s*false/);
+  });
+});
+
+// #3068: Electron only mirrors the root webContents (Profile 0) onto the
+// window title, so the active profile view's title has to be pushed instead.
+describe('ProfileViewManager switcher unread push (ADR-020 Phase 2)', () => {
+  function recordSends(wc) {
+    const sent = [];
+    wc.send = (channel, payload) => sent.push({ channel, payload });
+    return sent;
+  }
+
+  it('pushes per-profile unread to the pill on its own channel', () => {
+    const { pvm } = build([LEGACY, PROFILE_A]);
+    const chrome = createdViews.at(-1);
+    const sent = recordSends(chrome.webContents);
+    pvm.updateSwitcherUnread({ 'profile-a': 4 });
+    assert.deepStrictEqual(sent, [
+      {
+        channel: 'profile-switcher-unread',
+        payload: { unreadByProfileId: { 'profile-a': 4 } },
+      },
+    ]);
+  });
+
+  it('replays the last snapshot alongside the state push on every pill load', () => {
+    const { pvm } = build([LEGACY, PROFILE_A]);
+    const chrome = createdViews.at(-1);
+    pvm.updateSwitcherUnread({ 'profile-a': 2 });
+    const sent = recordSends(chrome.webContents);
+    chrome.webContents.emit('did-finish-load');
+    chrome.webContents.emit('did-finish-load'); // a reload must not lose the dots
+    assert.deepStrictEqual(
+      sent.map((m) => m.channel),
+      [
+        'profile-switcher-state',
+        'profile-switcher-unread',
+        'profile-switcher-state',
+        'profile-switcher-unread',
+      ]
+    );
+    assert.deepStrictEqual(sent[3].payload, {
+      unreadByProfileId: { 'profile-a': 2 },
+    });
+  });
+
+  it('skips the push once the pill is destroyed', () => {
+    const { pvm } = build([LEGACY, PROFILE_A]);
+    const chrome = createdViews.at(-1);
+    const sent = recordSends(chrome.webContents);
+    chrome.webContents._destroyed = true;
+    pvm.updateSwitcherUnread({ 'profile-a': 1 });
+    assert.deepStrictEqual(sent, []);
+  });
+});
+
+describe('ProfileViewManager window title follows the active profile (#3068)', () => {
+  it('sets the title from the active view, ignores background profiles, hands back to Profile 0', () => {
+    const titles = [];
+    const win = fakeWindow();
+    const pm = fakeProfilesManager([LEGACY, PROFILE_A, PROFILE_B]);
+    new ProfileViewManager(
+      win,
+      pm,
+      { url: 'https://teams.cloud.microsoft' },
+      () => {},
+      () => {},
+      () => {},
+      (title) => titles.push(title)
+    ).initialize();
+    const [viewA, viewB] = createdViews;
+    viewB.webContents.title = 'Chat | B | Microsoft Teams';
+    titles.length = 0;
+
+    pm.switch('profile-b');
+    assert.deepStrictEqual(titles, ['Chat | B | Microsoft Teams']);
+
+    viewB.webContents.emit('page-title-updated', {}, '(1) Chat | B | Microsoft Teams');
+    // Profile 0 (root) and profile A keep updating in the background.
+    win.webContents.emit('page-title-updated', {}, 'Chat | Profile 0 | Microsoft Teams');
+    viewA.webContents.emit('page-title-updated', {}, 'Chat | A | Microsoft Teams');
+    assert.deepStrictEqual(titles, [
+      'Chat | B | Microsoft Teams',
+      '(1) Chat | B | Microsoft Teams',
+    ]);
+
+    pm.switch('profile-0');
+    assert.strictEqual(titles.at(-1), null);
+  });
+
+  it('hands the title back when the active view destroys itself, not for a background one', () => {
+    const titles = [];
+    const pm = fakeProfilesManager([LEGACY, PROFILE_A, PROFILE_B]);
+    new ProfileViewManager(
+      fakeWindow(),
+      pm,
+      { url: 'https://teams.cloud.microsoft' },
+      () => {},
+      () => {},
+      () => {},
+      (title) => titles.push(title)
+    ).initialize();
+    const [viewA, viewB] = createdViews;
+    pm.switch('profile-b');
+    titles.length = 0;
+
+    viewA.destroyWebContents();
+    assert.deepStrictEqual(titles, []);
+    viewB.destroyWebContents();
+    assert.deepStrictEqual(titles, [null]);
   });
 });

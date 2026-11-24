@@ -109,6 +109,14 @@ sudo emerald install teams-for-linux
 sudo snap install teams-for-linux
 ```
 
+:::tip Audio/Webcam Hotplug on Modern Distros
+On Ubuntu 24.04+ or distributions with AppArmor 4.x, connect the `hardware-observe` interface to allow media device hotplug detection via netlink without AppArmor sandbox denial loops:
+
+```bash
+sudo snap connect teams-for-linux:hardware-observe
+```
+:::
+
 :::tip Update Frequency
 Flatpak is the slowest update channel — it only receives a new version after the release has reached 100% across all other channels. Snap stable is the next slowest, with manual promotion after testing. If you prefer fewer update notifications, these are good choices. See the [Release Cadence](development/manual-release-process.md#release-cadence) section for details.
 :::
@@ -162,6 +170,8 @@ The beta remote carries pre-release builds and packaging changes that are still 
    - **snap** - Universal snap package
    - **tar.gz** - Portable archive
 
+Packages are built for x86_64 and arm64. 32-bit ARM (armv7l) builds ended with the move to Electron 44, which no longer ships 32-bit binaries; existing armv7l installs keep working but receive no further updates.
+
 ### Package Installation
 
 #### Debian/Ubuntu (.deb)
@@ -195,6 +205,10 @@ chmod +x teams-for-linux_*.AppImage
 
 :::tip AppImage Integration
 For AppImage files, install [`AppImageLauncher`](https://github.com/TheAssassin/AppImageLauncher) for better desktop integration, including automatic menu entries and file associations.
+:::
+
+:::note FUSE requirement
+From 2.30.0 the AppImage uses the static AppImage runtime, so `libfuse2` is no longer needed. It still mounts itself through FUSE, which needs the `fusermount` or `fusermount3` command (the `fuse` or `fuse3` package; most desktop distributions install one). Where FUSE is not available at all, such as in some containers, run it with `./teams-for-linux_*.AppImage --appimage-extract-and-run`.
 :::
 
 #### Portable Installation (tar.gz)
@@ -258,10 +272,10 @@ teams-for-linux --user-data-dir=/path/to/custom/profile
 
 ```bash
 # Work profile
-teams-for-linux --user-data-dir=~/.config/teams-work --class=teams-work
+teams-for-linux --user-data-dir=~/.config/teams-work --window.class=teams-work
 
 # Personal profile  
-teams-for-linux --user-data-dir=~/.config/teams-personal --class=teams-personal
+teams-for-linux --user-data-dir=~/.config/teams-personal --window.class=teams-personal
 ```
 
 See [Multiple Instances](multiple-instances.md) for detailed setup.

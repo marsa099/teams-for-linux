@@ -14,6 +14,7 @@ const login = require("../login");
 const customCSS = require("../customCSS");
 const Menus = require("../menus");
 const { SpellCheckProvider } = require("../spellCheckProvider");
+const { writeStoredOption } = require("../config/renames");
 const { execFile } = require("node:child_process");
 const TrayIconChooser = require("../browser/tools/trayIconChooser");
 require("../appConfiguration");
@@ -22,9 +23,25 @@ const ssoPasswordPrefill = require("../ssoPasswordPrefill");
 const BrowserWindowManager = require("../mainAppWindow/browserWindowManager");
 const deepLinkRouter = require("./deepLinkRouter");
 const { DeferredDeepLink } = require("./deferredDeepLink");
+const { resolveLaunchUrl } = require("./protocolLink");
 const os = require("node:os");
 const path = require("node:path");
 const { installProfileWindowOpenHandler } = require("./profileWindowOpenPolicy");
+const { reloadIfSignedOut } = require("./signOutReload");
+const { isSafeExternalUrl, schemeOf } = require("../helpers/externalUrl");
+// Microsoft Cloud App Security proxy suffixes. Tenants that route Teams
+// through Defender for Cloud Apps (MCAS) load and store cookies on
+// MCAS-proxied domains rather than the underlying Microsoft domain.
+// Strip recognized suffixes before matching against AUTH_DOMAINS /
+// TEAMS_DOMAINS so proxied hosts are treated like canonical hosts.
+const { stripMcasSuffix } = require("../helpers/teamsHosts");
+const { keepMsalEncryptionCookiePersistent } = require("./msalCookiePersistence");
+const { isUrlPreviewRequest } = require("./urlPreviewBlock");
+const {
+  isDocumentPictureInPictureRequest,
+  documentPictureInPictureResponse,
+  lockDocumentPictureInPictureWindow,
+} = require("./documentPictureInPicture");
 
 const DEFAULT_SCREEN_SHARING_THUMBNAIL_CONFIG = {
   enabled: true,
@@ -49,6 +66,10 @@ let streamSelector;
 let screenSharingService = null;
 let connectionManager = null;
 let menus = null;
+let browserWindowManager = null;
+// Page title of the profile view currently shown over the root window, or
+// null while Profile 0 is (see setTitleOverride).
+let titleOverride = null;
 
 const isMac = os.platform() === "darwin";
 
@@ -232,18 +253,6 @@ function createScreenSharePreviewWindow() {
   });
 }
 
-// Microsoft Cloud App Security proxy suffix. Tenants that route Teams
-// through Defender for Cloud Apps (MCAS) load and store cookies at
-// `*.mcas.ms` rather than the underlying Microsoft domain. Strip the
-// suffix before matching against AUTH_DOMAINS / TEAMS_DOMAINS so the
-// proxied flavour is treated the same as the canonical hostname.
-const MCAS_SUFFIX = '.mcas.ms';
-function stripMcasSuffix(hostname) {
-  return hostname.endsWith(MCAS_SUFFIX)
-    ? hostname.slice(0, -MCAS_SUFFIX.length)
-    : hostname;
-}
-
 // Microsoft auth domains whose cookies should be checked/cleaned
 const AUTH_DOMAINS = [
   'login.microsoftonline.com',
@@ -283,7 +292,6 @@ const AUTH_LOCAL_STORAGE_PATTERNS = [
   'tmp.auth.v1.', 'refresh_token', 'msal.token', 'msal.',
   'EncryptionKey', 'authSessionId', 'LogoutState',
   'accessToken', 'idtoken', 'Account', 'Authority', 'ClientInfo',
-  'secure_teams_'
 ];
 
 /**
@@ -340,51 +348,6 @@ async function cleanExpiredAuthCookies(windowSession, forceCleanAll = false) {
     console.error('[AUTH_RECOVERY] Cookie check failed:', error.message);
     return { cleaned: 0, total: 0, expired: 0 };
   }
-}
-
-// Some localStorage tokens get encrypted by a Session cookie 'msal.cache.encryption'.
-// Electron drops this cookie on process exits, so the encrypted tokens can't be decrypted anymore
-// This forces a fresh login on every start (#2681)
-// Set an expiration date for the cookie to promote it from a session cookie, so it survives restarts
-const MSAL_ENCRYPTION_COOKIE = 'msal.cache.encryption';
-function keepMsalEncryptionCookiePersistent(windowSession) {
-  // undefined counts as enabled: a partial auth block in config.json replaces
-  // the defaults wholesale and must not silently disable this fix (#2722)
-  if (config?.auth?.keepMsalCacheEncryptionCookie?.enabled === false) return;
-  windowSession.cookies.on('changed', (_event, cookie, _cause, removed) => {
-    if (removed || cookie.name !== MSAL_ENCRYPTION_COOKIE || !cookie.session) {
-      return;
-    }
-
-    const bareDomain = (cookie.domain || '').replace(/^\./, '');
-    if (!bareDomain) return;
-    const url = `${cookie.secure ? 'https' : 'http'}://${bareDomain}${cookie.path || '/'}`;
-
-    // Get the days to keep the cookie from the config.
-    // If no value is set or the value is outside of 1 and 400 or not a number set it to 400
-    let keepMsalEncryptionDays = config?.auth?.keepMsalCacheEncryptionCookie?.days ?? 400;
-    if(keepMsalEncryptionDays > 400 || keepMsalEncryptionDays < 1 || Number.isNaN(keepMsalEncryptionDays)) keepMsalEncryptionDays = 400;
-
-    // Preserve the original attributes exactly, only add an expiry.
-    const details = {
-      url,
-      name: cookie.name,
-      value: cookie.value,
-      path: cookie.path,
-      secure: cookie.secure,
-      httpOnly: cookie.httpOnly,
-      sameSite: cookie.sameSite,
-      // Keep the Cookie for 400 days
-      expirationDate: Math.floor(Date.now() / 1000) + (keepMsalEncryptionDays * 24 * 60 * 60),
-    };
-    if ((cookie.domain || '').startsWith('.')) {
-      details.domain = cookie.domain;
-    }
-
-    windowSession.cookies.set(details)
-      .then(() => console.debug('[AUTH_RECOVERY] Promoted msal.cache.encryption cookie to persistent (survives restart)'))
-      .catch((err) => console.warn('[AUTH_RECOVERY] Failed to persist msal.cache.encryption cookie:', err.message));
-  });
 }
 
 // Always-on auth-failure signatures. MSAL reports an interaction-required error
@@ -724,7 +687,7 @@ exports.onAppReady = async function onAppReady(configGroup, customBackground, sh
     }
   }
 
-  const browserWindowManager = new BrowserWindowManager({
+  browserWindowManager = new BrowserWindowManager({
     config: config,
     iconChooser: iconChooser,
     // Lets the startup clear reach every profile partition (#2866).
@@ -807,7 +770,7 @@ exports.onAppReady = async function onAppReady(configGroup, customBackground, sh
 
   // Keep the msal.cache.encryption cookie
   // Run before loading Teams so the cookie gets caught right at the start
-  keepMsalEncryptionCookiePersistent(window.webContents.session);
+  keepMsalEncryptionCookiePersistent(window.webContents.session, config);
 
   // Clean expired auth cookies before loading Teams to prevent the
   // "We need you to sign in again" stale banner (#2296)
@@ -866,7 +829,12 @@ exports.onAppReady = async function onAppReady(configGroup, customBackground, sh
     maybeScheduleAuthRecovery(event.message, event.sourceId);
   });
 
-  login.handleLoginDialogTry(window, config.ssoBasicAuthUser, config.ssoBasicAuthPasswordCommand);
+  login.handleLoginDialogTry(
+    window,
+    config.ssoBasicAuthUser,
+    config.ssoBasicAuthPasswordCommand,
+    config.auth?.basic?.hosts,
+  );
 
   const url = processArgs(process.argv);
   connectionManager.start(url, {
@@ -878,7 +846,7 @@ exports.onAppReady = async function onAppReady(configGroup, customBackground, sh
 };
 
 function onSpellCheckerLanguageChanged(languages) {
-  appConfig.legacyConfigStore.set("spellCheckerLanguages", languages);
+  writeStoredOption(appConfig.legacyConfigStore, "spellCheckerLanguages", languages);
 }
 
 let allowFurtherRequests = true;
@@ -900,13 +868,24 @@ exports.show = function () {
 // "restore" (issue #2647).
 exports.restoreWindow = restoreWindow;
 
+// The tray is created inside Menus during onAppReady; Phase 2's unread
+// aggregator attaches to it afterwards. Null when trayIconEnabled is off.
+exports.getTray = function () {
+  return menus?.tray ?? null;
+};
+
 exports.getWindow = function () {
   return window;
+};
+
+exports.performIncomingCallAction = function (action) {
+  return browserWindowManager?.performIncomingCallAction(action) === true;
 };
 
 exports.bindDisplayMediaHandler = bindDisplayMediaHandler;
 exports.bindWindowOpenHandler = bindWindowOpenHandler;
 exports.injectScreenSharingLogic = injectScreenSharingLogic;
+exports.setTitleOverride = setTitleOverride;
 
 exports.setQuickChatManager = function (quickChatManager) {
   if (menus) {
@@ -1039,6 +1018,10 @@ function onDidFinishLoad() {
     return;
   }
 
+  if (reloadIfSignedOut(window.webContents, config.url, config.chromeUserAgent)) {
+    return;
+  }
+
   window.webContents.executeJavaScript(`
 			openBrowserButton = document.querySelector('[data-tid=joinOnWeb]');
 			openBrowserButton && openBrowserButton.click();
@@ -1050,7 +1033,7 @@ function onDidFinishLoad() {
 
   injectScreenSharingLogic(window.webContents);
 
-  customCSS.onDidFinishLoad(window.webContents, config);
+  customCSS.onDidFinishLoad(window.webContents, config, appConfig.customCSSPath);
   initSystemThemeFollow(config);
 }
 
@@ -1068,7 +1051,12 @@ function injectScreenSharingLogic(webContents) {
   );
   try {
     const script = fs.readFileSync(scriptPath, "utf8");
-    webContents.executeJavaScript(script).catch((err) => {
+    const resolutionConfig = config?.screenSharing?.resolution ?? {
+      enabled: false,
+      mode: "remove",
+    };
+    const configScript = `globalThis.__tflScreenSharingResolution = ${JSON.stringify(resolutionConfig)};`;
+    webContents.executeJavaScript(`${configScript}\n${script}`).catch((err) => {
       console.error("[SCREEN_SHARE] Failed to execute injected script:", err.message);
     });
   } catch (err) {
@@ -1106,7 +1094,7 @@ function onDidFrameFinishLoad(
   }
 
   const wf = webFrameMain.fromId(frameProcessId, frameRoutingId);
-  customCSS.onDidFrameFinishLoad(wf, config);
+  customCSS.onDidFrameFinishLoad(wf, config, appConfig.customCSSPath);
 }
 
 function restoreWindow() {
@@ -1124,41 +1112,19 @@ function restoreWindow() {
 }
 
 /**
- * Processes command line arguments to extract Teams URLs and protocol handlers.
- * Handles both msteams:// protocol links and HTTPS URLs that match the Teams domain pattern.
- * This enables deep linking into Teams conversations, meetings, and channels.
+ * Processes command line arguments to extract Teams URLs and protocol handlers,
+ * and shows the window when one is found. The matching lives in
+ * `resolveLaunchUrl` so it can be tested without Electron.
  *
  * @param {string[]} args - Command line arguments to process
  * @returns {string|null} Processed URL to navigate to, or null if no valid URL found
  */
 function processArgs(args) {
-  // Legacy Teams protocol format: msteams:/l/meetup-join/...
-  const v1msTeams = new RegExp(config.msTeamsProtocols.v1);
-  // Modern Teams protocol format: msteams://teams.microsoft.com/l/...
-  const v2msTeams = new RegExp(config.msTeamsProtocols.v2);
-  console.debug("processArgs:", args);
-  for (const arg of args) {
-    console.debug(
-      `testing RegExp processArgs ${new RegExp(config.meetupJoinRegEx).test(
-        arg
-      )}`
-    );
-    if (new RegExp(config.meetupJoinRegEx).test(arg)) {
-      console.debug("A url argument received with https protocol");
-      window.show();
-      return arg;
-    }
-    if (v1msTeams.test(arg)) {
-      console.debug("A url argument received with msteams v1 protocol");
-      window.show();
-      return config.url + arg.substring(8, arg.length);
-    }
-    if (v2msTeams.test(arg)) {
-      console.debug("A url argument received with msteams v2 protocol");
-      window.show();
-      return arg.replace("msteams", "https");
-    }
+  const url = resolveLaunchUrl(args, config);
+  if (url) {
+    window.show();
   }
+  return url;
 }
 
 // Microsoft telemetry / beacon hosts that are not required for Teams to
@@ -1197,7 +1163,8 @@ function isMicrosoftTelemetryHost(url) {
 }
 
 function onBeforeRequestHandler(details, callback) {
-  if (isMicrosoftTelemetryHost(details.url)) {
+  if (isMicrosoftTelemetryHost(details.url)
+    || (config.platform?.disableUrlPreviews && isUrlPreviewRequest(details.url))) {
     callback({ cancel: true });
     return;
   }
@@ -1307,13 +1274,8 @@ function stripCspForAuthPages(responseHeaders, url) {
 
   for (const key of Object.keys(responseHeaders)) {
     if (key.toLowerCase() === 'content-security-policy-report-only') {
-      let hostname;
-      try {
-        hostname = new URL(url).hostname;
-      } catch {
-        hostname = 'unknown';
-      }
-      console.debug(`[CSP] Stripping report-only header from: ${hostname}`);
+      // The host is not logged: it can name a tenant's identity provider.
+      console.debug('[CSP] Stripping report-only header from a non-Teams page');
       delete responseHeaders[key];
     }
   }
@@ -1342,6 +1304,13 @@ function onBeforeSendHeadersHandler(detail, callback) {
 }
 
 function onNewWindow(details) {
+  // Must precede the about:blank handling below (auth breadcrumb and deny):
+  // the Document PiP replacement opens an about:blank popup that Teams renders
+  // its call controls into.
+  if (isDocumentPictureInPictureRequest(details, config)) {
+    return documentPictureInPictureResponse();
+  }
+
   // Breadcrumb for diagnosing which shape of popup the "sign in again"
   // banner opens (about:blank-then-navigate vs a direct login URL) — the two
   // take different paths below and only the direct form can be intercepted
@@ -1389,19 +1358,42 @@ function onNewWindow(details) {
   return secureOpenLink(details);
 }
 
+// A custom app.title replaces the trailing "Microsoft Teams" in the window
+// title (or is appended when Teams omits it) so multiple instances can be
+// told apart in taskbars and Alt+Tab (#3035). The default leaves the page
+// title untouched.
+function formatWindowTitle(title) {
+  const defaultTitle = "Microsoft Teams";
+  if (!config.appTitle || config.appTitle === defaultTitle) return title;
+  return title.endsWith(defaultTitle)
+    ? title.slice(0, -defaultTitle.length) + config.appTitle
+    : `${title} - ${config.appTitle}`;
+}
+
 function onPageTitleUpdated(event, title) {
   window.webContents.send("page-title", title);
-  // A custom app.title replaces the trailing "Microsoft Teams" in the window
-  // title (or is appended when Teams omits it) so multiple instances can be
-  // told apart in taskbars and Alt+Tab (#3035). The default leaves Electron
-  // mirroring document.title untouched.
-  const defaultTitle = "Microsoft Teams";
-  if (config.appTitle && config.appTitle !== defaultTitle) {
+  // While another profile's view is shown its title owns the window, so
+  // Profile 0's background updates must not replace it (#3068).
+  if (titleOverride !== null) {
     event.preventDefault();
-    window.setTitle(title.endsWith(defaultTitle)
-      ? title.slice(0, -defaultTitle.length) + config.appTitle
-      : `${title} - ${config.appTitle}`);
+    return;
   }
+  // The default app.title leaves Electron mirroring document.title.
+  const windowTitle = formatWindowTitle(title);
+  if (windowTitle !== title) {
+    event.preventDefault();
+    window.setTitle(windowTitle);
+  }
+}
+
+// Multi-account: ProfileViewManager passes the active profile view's page
+// title, or null when Profile 0 (the root webContents) is shown again. A
+// null while Profile 0 already owns the title leaves it alone.
+function setTitleOverride(title) {
+  if (title === null && titleOverride === null) return;
+  titleOverride = title;
+  if (!window || window.isDestroyed()) return;
+  window.setTitle(formatWindowTitle(title ?? window.webContents.getTitle()));
 }
 
 function onNavigationChanged() {
@@ -1450,6 +1442,12 @@ function addEventHandlers() {
 
   window.on("page-title-updated", onPageTitleUpdated);
   window.webContents.setWindowOpenHandler(onNewWindow);
+  // Keep the unsandboxed PiP window on about:blank (documentPictureInPicture.js).
+  window.webContents.on("did-create-window", (child, details) => {
+    if (isDocumentPictureInPictureRequest(details, config)) {
+      lockDocumentPictureInPictureWindow(child.webContents);
+    }
+  });
   window.webContents.session.webRequest.onBeforeRequest(
     { urls: ["https://*/*"] },
     onBeforeRequestHandler
@@ -1553,17 +1551,18 @@ function secureOpenLink(details) {
 }
 
 function openInBrowser(details) {
+  // The page chooses this URL, and the OS runs whatever is registered for its
+  // scheme, so only the schemes in helpers/externalUrl.js leave the app.
+  const scheme = schemeOf(details.url) ?? "unparseable";
+  if (!isSafeExternalUrl(details.url)) {
+    console.warn("[LINK] Refused to open a link with an unsupported scheme", { scheme });
+    return;
+  }
   if (config.defaultURLHandler.trim() === "") {
     // A scheme with no handling app rejects; uncaught, that reaches the
     // process-wide unhandledRejection handler and exits the app.
     // Only the scheme is logged: the OS error message can echo the URL.
     shell.openExternal(details.url).catch(() => {
-      let scheme = "unparseable";
-      try {
-        scheme = new URL(details.url).protocol;
-      } catch {
-        // keep "unparseable"
-      }
       console.error("[LINK] Could not open link externally", { scheme });
     });
   } else {
@@ -1575,9 +1574,11 @@ function openInBrowser(details) {
   }
 }
 
+// execFile puts the whole command line, link included, in error.message, so
+// only the exit code (or a code such as ENOENT) is logged.
 function openInBrowserErrorHandler(error) {
   if (error) {
-    console.error(`openInBrowserErrorHandler ${error.message}`);
+    console.error("[LINK] The configured URL handler failed", { code: error.code ?? "unknown" });
   }
 }
 

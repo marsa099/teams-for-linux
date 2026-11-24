@@ -19,6 +19,7 @@ const {
 } = require("../utils/storagePartitions");
 const Tray = require("./tray");
 const TrayIconChooser = require("../browser/tools/trayIconChooser");
+const themeIcon = require("./themeIcon");
 const { SpellCheckProvider } = require("../spellCheckProvider");
 const DocumentationWindow = require("../documentationWindow");
 const GpuInfoWindow = require("../gpuInfoWindow");
@@ -30,6 +31,7 @@ const {
   writeMigratedConfig,
   MIGRATED_FILE,
 } = require("../config/migrateFile");
+const { writeStoredOption } = require("../config/renames");
 
 let _Menus_onSpellCheckerLanguageChanged = new WeakMap();
 class Menus {
@@ -318,7 +320,8 @@ class Menus {
     });
     if (result && result.length > 0) {
       const selectedPath = result[0];
-      if (nativeImage.createFromPath(selectedPath).isEmpty()) {
+      const image = nativeImage.createFromPath(selectedPath);
+      if (image.isEmpty()) {
         dialog.showMessageBoxSync(this.window, {
           type: "error",
           title: "Choose App Icon",
@@ -328,20 +331,79 @@ class Menus {
         return;
       }
       this.configGroup.startupConfig.appIcon = selectedPath;
-      this.configGroup.legacyConfigStore.set("appIcon", selectedPath);
+      writeStoredOption(this.configGroup.legacyConfigStore, "appIcon", selectedPath);
       this.tray?.setBaseIconPath(selectedPath);
       this.#updateWindowIcon(selectedPath);
+      if (themeIcon.supported()) {
+        this.#askThemeIcon(image);
+      }
       this.updateMenu();
     }
   }
 
+  #askThemeIcon(image) {
+    const opts = this.#themeIconOptions();
+    const choice = dialog.showMessageBoxSync(this.window, {
+      type: "question",
+      title: "App Icon",
+      message: "Also use it for the taskbar and launcher?",
+      detail:
+        "This copies the icon into your icon theme under ~/.local/share/icons. " +
+        "It shows on the next start, on some desktops after you log in again. " +
+        "You can change this later under App Icon.",
+      buttons: ["Yes", "No"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (choice === 0) {
+      themeIcon.install(image, opts);
+    } else {
+      themeIcon.remove(opts);
+    }
+  }
+
+  toggleThemeIcon() {
+    const opts = this.#themeIconOptions();
+    if (themeIcon.installed(opts)) {
+      themeIcon.remove(opts);
+    } else {
+      const image = nativeImage.createFromPath(this.configGroup.startupConfig.appIcon);
+      if (image.isEmpty()) {
+        dialog.showMessageBoxSync(this.window, {
+          type: "error",
+          title: "App Icon",
+          message: "The chosen icon could not be read as an image.",
+          detail: "Choose it again under App Icon, then tick this box.",
+        });
+      } else {
+        this.#installThemeIcon(image);
+      }
+    }
+    this.updateMenu();
+  }
+
+  #themeIconOptions() {
+    return { windowClass: this.configGroup.startupConfig.class };
+  }
+
+  #installThemeIcon(image) {
+    if (!themeIcon.install(image, this.#themeIconOptions())) return;
+    dialog.showMessageBoxSync(this.window, {
+      type: "info",
+      title: "App Icon",
+      message: "The taskbar and launcher pick up the icon on the next start.",
+      detail: "Some desktops only refresh it after you log in again.",
+    });
+  }
+
   resetAppIcon() {
     this.configGroup.startupConfig.appIcon = "";
-    this.configGroup.legacyConfigStore.set("appIcon", "");
+    writeStoredOption(this.configGroup.legacyConfigStore, "appIcon", "");
     const iconChooser = new TrayIconChooser(this.configGroup.startupConfig);
     const iconPath = iconChooser.getFile();
     this.tray?.setBaseIconPath(iconPath);
     this.#updateWindowIcon(iconPath);
+    themeIcon.remove(this.#themeIconOptions());
     this.updateMenu();
   }
 
@@ -496,6 +558,43 @@ class Menus {
     await this.#openPath("config folder", this.configGroup.configPath);
   }
 
+  async openThemesFolder() {
+    const directory = path.join(this.configGroup.configPath, "themes");
+    try {
+      fs.mkdirSync(directory, { recursive: true });
+      const error = await shell.openPath(directory);
+      if (error) throw new Error("Could not open themes folder");
+    } catch {
+      console.warn("[Themes] Could not open themes folder");
+      dialog.showErrorBox("Themes", "Could not open the themes folder.");
+    }
+  }
+
+  async selectTheme(selection) {
+    try {
+      const changed = this.configGroup.setThemeSelection(selection);
+      this.updateMenu();
+      // An enabled config watcher already relaunches after this write.
+      if (!changed || this.configGroup.isWatchingConfigFile) return;
+      const { response } = await dialog.showMessageBox(this.window, {
+        type: "info",
+        title: "Theme saved",
+        message: "Restart Teams for Linux to apply the selected theme.",
+        buttons: ["Restart now", "Later"],
+        defaultId: 0,
+        cancelId: 1,
+      });
+      if (response === 0) {
+        app.relaunch();
+        app.exit(0);
+      }
+    } catch {
+      this.updateMenu();
+      console.warn("[Themes] Could not save theme selection");
+      dialog.showErrorBox("Themes", "Could not save the theme selection. Check that config.json is valid and writable.");
+    }
+  }
+
   // shell.openPath resolves to an empty string on success and to the reason as
   // a string on failure — it does not reject — so the result has to be checked.
   async #openPath(what, target) {
@@ -574,7 +673,7 @@ class Menus {
   toggleDisableNotifications() {
     this.configGroup.startupConfig.disableNotifications =
       !this.configGroup.startupConfig.disableNotifications;
-    this.configGroup.legacyConfigStore.set(
+    writeStoredOption(this.configGroup.legacyConfigStore,
       "disableNotifications",
       this.configGroup.startupConfig.disableNotifications
     );
@@ -584,7 +683,7 @@ class Menus {
   toggleDisableNotificationSound() {
     this.configGroup.startupConfig.disableNotificationSound =
       !this.configGroup.startupConfig.disableNotificationSound;
-    this.configGroup.legacyConfigStore.set(
+    writeStoredOption(this.configGroup.legacyConfigStore,
       "disableNotificationSound",
       this.configGroup.startupConfig.disableNotificationSound
     );
@@ -594,7 +693,7 @@ class Menus {
   toggleDisableNotificationSoundIfNotAvailable() {
     this.configGroup.startupConfig.disableNotificationSoundIfNotAvailable =
       !this.configGroup.startupConfig.disableNotificationSoundIfNotAvailable;
-    this.configGroup.legacyConfigStore.set(
+    writeStoredOption(this.configGroup.legacyConfigStore,
       "disableNotificationSoundIfNotAvailable",
       this.configGroup.startupConfig.disableNotificationSoundIfNotAvailable
     );
@@ -604,7 +703,7 @@ class Menus {
   toggleDisableNotificationWindowFlash() {
     this.configGroup.startupConfig.disableNotificationWindowFlash =
       !this.configGroup.startupConfig.disableNotificationWindowFlash;
-    this.configGroup.legacyConfigStore.set(
+    writeStoredOption(this.configGroup.legacyConfigStore,
       "disableNotificationWindowFlash",
       this.configGroup.startupConfig.disableNotificationWindowFlash
     );
@@ -614,7 +713,7 @@ class Menus {
   toggleDisableBadgeCount() {
     this.configGroup.startupConfig.disableBadgeCount =
       !this.configGroup.startupConfig.disableBadgeCount;
-    this.configGroup.legacyConfigStore.set(
+    writeStoredOption(this.configGroup.legacyConfigStore,
       "disableBadgeCount",
       this.configGroup.startupConfig.disableBadgeCount
     );
@@ -623,7 +722,7 @@ class Menus {
 
   setNotificationUrgency(value) {
     this.configGroup.startupConfig.defaultNotificationUrgency = value;
-    this.configGroup.legacyConfigStore.set("defaultNotificationUrgency", value);
+    writeStoredOption(this.configGroup.legacyConfigStore, "defaultNotificationUrgency", value);
     this.updateMenu();
   }
 
@@ -637,10 +736,12 @@ class Menus {
     this.window.webContents.executeJavaScript(script, true);
   }
 
-  joinMeeting() {
+  async joinMeeting() {
     let clipboardText = '';
     try {
-      clipboardText = clipboard.readText();
+      // Electron 44 moved the clipboard module onto the W3C Clipboard API, so
+      // readText() resolves rather than returns.
+      clipboardText = await clipboard.readText();
     } catch (error) {
       console.error('Error reading clipboard:', error);
     }

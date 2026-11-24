@@ -6,6 +6,7 @@ const {
   systemPreferences,
   nativeImage,
   session,
+  webContents,
 } = require("electron");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -18,6 +19,8 @@ const GraphApiClient = require("./graphApi");
 const { registerGraphApiHandlers } = require("./graphApi/ipcHandlers");
 const { allowedChannels } = require("./security/ipcValidator");
 const { installIpcSecurity } = require("./security/ipcSecurity");
+const { installWebviewGuard } = require("./security/webviewGuard");
+const { installPermissionHandlers } = require("./security/permissions");
 const { sanitize: sanitizePii } = require("./utils/logSanitizer");
 const { isPreLoginAuthNoise, parseChunkLoadFailure, formatChunkLoadWarning } = require("./utils/rendererErrors");
 const { register: registerGlobalShortcuts, sendKeyboardEventToWindow } = require("./globalShortcuts");
@@ -30,6 +33,10 @@ const ScreenSharingService = require("./screenSharing/service");
 const PartitionsManager = require("./partitions/manager");
 const ProfilesManager = require("./profilesManager");
 const ProfileViewManager = require("./mainAppWindow/profileViewManager");
+const { PIP_FRAME_NAME } = require("./mainAppWindow/documentPictureInPicture");
+const { PROTOCOL_SCHEMES } = require("./mainAppWindow/protocolLink");
+const TeamsControlService = require("./control/teamsControlService");
+const TeamsStateService = require("./control/teamsStateService");
 const IdleMonitor = require("./idle/monitor");
 const AutoUpdater = require("./autoUpdater");
 const WebAuthn = require("./webauthn");
@@ -61,6 +68,7 @@ if (process.platform === "linux") {
 }
 
 const { NETWORK_ERROR_PATTERNS } = require("./config/defaults");
+const { toRendererConfig } = require("./config/rendererConfig");
 
 function isNetworkError(message) {
   if (typeof message !== 'string') return false;
@@ -115,6 +123,8 @@ const appConfig = new AppConfiguration(
 
 const config = appConfig.startupConfig;
 config.appPath = path.join(__dirname, app.isPackaged ? "../../" : "");
+// Runtime-only: the per-launch PiP frame name reaches the browser tool through get-config.
+config.documentPictureInPictureFrameName = PIP_FRAME_NAME;
 
 CommandLineManager.addSwitchesAfterConfigLoad(config);
 
@@ -137,6 +147,8 @@ let mqttClient = null;
 let mqttMediaStatusService = null;
 let haDiscovery = null;
 let graphApiClient = null;
+let teamsStateService = null;
+let teamsControlService = null;
 let quickChatManager = null;
 
 const { createPlayer } = require("./audio/player");
@@ -173,6 +185,11 @@ const profilesManager = new ProfilesManager(appConfig.settingsStore);
 // multi-account flag is on; the manager is wired to the main window
 // after `mainAppWindow.onAppReady` resolves.
 let profileViewManager = null;
+let dbusControlService = null;
+
+// ADR-020 Phase 2 unread aggregation; null with the flag off, where the
+// tray/badge handlers keep their single-sender behaviour.
+let unreadAggregator = null;
 
 const idleMonitor = new IdleMonitor(config, getUserStatus);
 
@@ -215,9 +232,10 @@ if (isMac) {
   requestMediaAccess();
 }
 
-const protocolClient = "msteams";
-if (!app.isDefaultProtocolClient(protocolClient, process.execPath)) {
-  app.setAsDefaultProtocolClient(protocolClient, process.execPath);
+for (const protocolClient of PROTOCOL_SCHEMES) {
+  if (!app.isDefaultProtocolClient(protocolClient, process.execPath)) {
+    app.setAsDefaultProtocolClient(protocolClient, process.execPath);
+  }
 }
 
 if (gotTheLock) {
@@ -227,6 +245,13 @@ if (gotTheLock) {
   app.on("render-process-gone", onRenderProcessGone);
   app.on("will-quit", async () => {
     console.debug("will-quit");
+    teamsStateService?.dispose();
+    teamsControlService?.dispose();
+    try {
+      dbusControlService?.stop();
+    } catch (error) {
+      console.warn("[DBUS_CONTROL] Failed to stop service", { message: error.message });
+    }
     if (mqttClient) {
       await mqttClient.disconnect();
     }
@@ -240,12 +265,15 @@ if (gotTheLock) {
   // The wrapping also covers removal, so listeners registered per short-lived
   // window can actually be taken off again. See app/security/ipcSecurity.js.
   installIpcSecurity(ipcMain);
+  // Refuse every <webview> attach (GHSA-6xpg-fhf9-chcr). See app/security/webviewGuard.js.
+  installWebviewGuard(app);
 
   // Restart application when configuration file changes
   ipcMain.on("config-file-changed", restartApp);
-  // Get current application configuration
+  // Get current application configuration, without credentials: page script
+  // in the Teams window can read whatever this returns (GHSA-58j7-22f8-6xqp)
   ipcMain.handle("get-config", async () => {
-    return config;
+    return toRendererConfig(config);
   });
 
   notificationService.initialize();
@@ -279,11 +307,6 @@ if (gotTheLock) {
       }
     }
   });
-  // Get application version number
-  ipcMain.handle("get-app-version", async () => {
-    return config.appVersion;
-  });
-
   // Navigate back in browser history
   ipcMain.on("navigate-back", (event) => {
     const webContents = event.sender;
@@ -390,7 +413,7 @@ const MAX_RENDERER_LOG_FIELD_LENGTH = 4096;
  * result. Non-strings fall back to the supplied fallback.
  *
  * Renderer errors from Teams can contain UserId/tenantId/Trace ID/Correlation
- * ID values that match the shared UUID pattern. CLAUDE.md treats account IDs
+ * ID values that match the shared UUID pattern. AGENTS.md treats account IDs
  * and SSO info as must-not-log.
  *
  * @param {unknown} value - The field value to sanitize.
@@ -438,6 +461,19 @@ function onRenderProcessGone(event, webContents, details) {
 
 function onAppTerminated() {
   app.quit();
+}
+
+function getControlWebContents() {
+  try {
+    if (profileViewManager) {
+      const active = profileViewManager.getActiveWebContents();
+      return active && !active.isDestroyed() ? active : null;
+    }
+    const window = mainAppWindow.getWindow();
+    return window && !window.isDestroyed() ? window.webContents : null;
+  } catch {
+    return null;
+  }
 }
 
 function handleShortcutCommand({ action, shortcut }) {
@@ -604,10 +640,14 @@ function loadMenuToggleSettings() {
     'appIcon'
   ];
 
+  // The store is the user's config.json, so it may hold either ADR-025
+  // spelling; readStoredOption lets the nested one win, as the loader does.
+  const { readStoredOption } = require("./config/renames");
   for (const setting of menuToggleSettings) {
-    if (appConfig.legacyConfigStore.has(setting)) {
-      config[setting] = appConfig.legacyConfigStore.get(setting);
-    }
+    // A value from the command line or environment beats config.json.
+    if (config.optionsSetOutsideConfigFile?.includes(setting)) continue;
+    const value = readStoredOption(appConfig.legacyConfigStore, setting);
+    if (value !== undefined) config[setting] = value;
   }
 }
 
@@ -668,6 +708,29 @@ function initializeAutoUpdater() {
   }
 }
 
+function initializeDbusControl() {
+  if (process.platform !== "linux" || config.dbusControl?.enabled !== true) return;
+  teamsStateService = new TeamsStateService(config, {
+    getActiveWebContents: getControlWebContents,
+  });
+  teamsStateService.initialize();
+  teamsControlService = new TeamsControlService({
+    getShortcutWebContents: getControlWebContents,
+    performIncomingCallAction: (action) => mainAppWindow.performIncomingCallAction(action),
+    stateService: teamsStateService,
+  });
+  try {
+    const DBusControlService = require("./dbus/controlService");
+    dbusControlService = new DBusControlService(teamsControlService, {
+      busName: config.dbusControl.busName,
+    });
+    dbusControlService.start();
+  } catch (error) {
+    dbusControlService = null;
+    console.warn("[DBUS_CONTROL] Service unavailable; continuing without D-Bus control", { message: error.message });
+  }
+}
+
 async function handleAppReady() {
   try {
     await showConfigurationDialogs();
@@ -683,6 +746,7 @@ async function handleAppReady() {
       initializeMqtt();
     }
 
+    initializeDbusControl();
     loadMenuToggleSettings();
 
     const customBackground = new CustomBackground(app, config);
@@ -703,6 +767,26 @@ async function handleAppReady() {
     // exist so their sessions are caught by the session-created listener.
     certificateModule.installCertificateVerifyProc(config, app, session.defaultSession);
 
+    // Device permissions only for Teams, sign-in and the app's own pages
+    // (GHSA-58j7-22f8-6xqp). Same timing as above, so profile partitions are
+    // caught by the session-created listener.
+    // Cached because electron-store re-reads its JSON on every access and
+    // permission checks are frequent; profile events invalidate it.
+    let profileUrlCache = null;
+    const invalidateProfileUrls = () => {
+      profileUrlCache = null;
+    };
+    profilesManager.on("add", invalidateProfileUrls);
+    profilesManager.on("update", invalidateProfileUrls);
+    profilesManager.on("remove", invalidateProfileUrls);
+    installPermissionHandlers(config, app, session.defaultSession, () => {
+      profileUrlCache ??= profilesManager
+        .list()
+        .map((p) => p.url)
+        .filter((url) => typeof url === "string" && url.startsWith("https://"));
+      return profileUrlCache;
+    });
+
     await mainAppWindow.onAppReady(appConfig, customBackground, screenSharingService, profilesManager);
 
     // Flatpak only: record the background permission with the desktop portal
@@ -721,10 +805,32 @@ async function handleAppReady() {
           config,
           mainAppWindow.bindDisplayMediaHandler,
           mainAppWindow.bindWindowOpenHandler,
-          mainAppWindow.injectScreenSharingLogic
+          mainAppWindow.injectScreenSharingLogic,
+          mainAppWindow.setTitleOverride
         );
         profileViewManager.initialize();
+        const {
+          registerProfileNotificationFlags,
+        } = require("./profileNotifications");
+        registerProfileNotificationFlags({
+          ipcMain,
+          getAllWebContents: () => webContents.getAllWebContents(),
+          viewManager: profileViewManager,
+          profilesManager,
+        });
+        const {
+          createProfileActivator,
+          registerWebNotificationClick,
+        } = require("./profileActivation");
+        const activateProfile = createProfileActivator({
+          viewManager: profileViewManager,
+          profilesManager,
+        });
+        notificationService.setProfileActivator(activateProfile);
+        customNotificationManager.setProfileActivator(activateProfile);
+        registerWebNotificationClick({ ipcMain, activate: activateProfile });
         await profileViewManager.bootstrapProfileZeroIfNeeded();
+        unreadAggregator = createUnreadAggregator(profileViewManager);
       } else {
         console.warn(
           "[ProfileViewManager] main window unavailable after onAppReady; multi-account features disabled for this session"
@@ -738,6 +844,9 @@ async function handleAppReady() {
 
     initializeGraphApiClient();
     registerGraphApiHandlers(ipcMain, graphApiClient);
+    if (teamsControlService && config.multiAccount?.enabled) {
+      profilesManager.on("switch", () => setImmediate(() => teamsControlService.refreshState()));
+    }
     initializeQuickChat();
     registerGlobalShortcuts(config, mainAppWindow, app);
     initializeAutoUpdater();
@@ -784,6 +893,7 @@ async function requestMediaAccess() {
 
 async function userStatusChangedHandler(_event, options) {
   userStatus = options.data.status;
+  teamsStateService?.setPresence(userStatus, _event?.sender);
 
   if (mqttClient) {
     try {
@@ -794,7 +904,22 @@ async function userStatusChangedHandler(_event, options) {
   }
 }
 
-async function setBadgeCountHandler(_event, count) {
+// Replayed on aggregator attach — renderers dedupe and never re-send an
+// unchanged count, so a pre-attach report would otherwise be lost.
+const preAggregatorBadgeCounts = new Map();
+
+async function setBadgeCountHandler(event, count) {
+  if (unreadAggregator) {
+    unreadAggregator.onBadgeCount(event, count);
+    return;
+  }
+  if (config.multiAccount?.enabled && typeof event?.sender?.id === "number") {
+    preAggregatorBadgeCounts.set(event.sender.id, count);
+  }
+  applyBadgeCount(count);
+}
+
+function applyBadgeCount(count) {
   if (!config.disableBadgeCount) {
     app.setBadgeCount(count);
     // Electron's own Linux badge path loads libunity at runtime, which none
@@ -814,6 +939,81 @@ async function setBadgeCountHandler(_event, count) {
       }
     }
   }
+}
+
+// Factory so the flag-off path never touches any of this wiring.
+function createUnreadAggregator(viewManager) {
+  const ProfileUnreadAggregator = require("./profileUnread");
+  const { createBadgeRenderBridge } = require("./profileUnread/badgeRenderBridge");
+  // The predicate the renderer itself uses to decide whether it draws the dot
+  // (presenceColors.js): main only needs it to know whether a zero-unread icon
+  // is worth asking for at all.
+  const { wantsPresenceStatus } = require("./browser/tools/presenceColors");
+
+  const requestBadgeRender = createBadgeRenderBridge({
+    ipcMain,
+    getTarget: () => viewManager.getActiveWebContents(),
+    // createFromDataURL yields an EMPTY image (not a throw) for malformed
+    // payloads; a bad reply must resolve null, never become the fallback.
+    sanitizeIcon: (icon) =>
+      nativeImage.createFromDataURL(icon).isEmpty() ? null : icon,
+  });
+
+  // Cached: electron-store re-reads its JSON on every access, and this sits
+  // on the per-badge-tick path. Profile events invalidate it.
+  let nameCache = null;
+  const getProfileName = (profileId) => {
+    if (!nameCache) {
+      nameCache = new Map(profilesManager.list().map((p) => [p.id, p.name]));
+    }
+    return nameCache.get(profileId) ?? null;
+  };
+  const invalidateNames = () => {
+    nameCache = null;
+  };
+  profilesManager.on("add", invalidateNames);
+  profilesManager.on("update", invalidateNames);
+  profilesManager.on("remove", invalidateNames);
+
+  const aggregator = new ProfileUnreadAggregator({
+    // Pure map read; getProfileFor re-reads the settings file per call.
+    resolveProfileId: (event) => viewManager.resolveProfileId(event?.sender),
+    isPrimarySender: (event) => viewManager.isPrimaryProfileSurface(event),
+    getProfileName,
+    requestBadgeRender,
+    wantsPresenceOverlay: () => wantsPresenceStatus(config),
+    applyTray: (update) => mainAppWindow.getTray()?.applyAggregate(update),
+    applyBadgeCount,
+    appTitle: config.appTitle,
+    onUnreadChanged: (unread) => viewManager.updateSwitcherUnread(unread),
+  });
+
+  // No surface is left to report a zero after removal or a view dying on
+  // its own — holding the last count would inflate the badge all session.
+  // PVM's own "add" handler registers first and teaches the sender map the
+  // new owner (Profile 0 bootstrapping mid-session); then carry over any
+  // count the root window reported before it was attributable.
+  profilesManager.on("add", () => aggregator.reattribute());
+  profilesManager.on("remove", ({ removedId }) =>
+    aggregator.removeProfile(removedId)
+  );
+  viewManager.onProfileViewGone((profileId) =>
+    aggregator.removeProfile(profileId)
+  );
+  // The presence dot belongs to the selected profile, and a switch changes
+  // whose renderer draws it without a status or a count changing — both are
+  // deduped upstream — so the aggregate has to be re-rendered on the switch
+  // itself (#3102). Registered after ProfileViewManager's own switch handler,
+  // which is what attaches and reveals the incoming view.
+  profilesManager.on("switch", () => setImmediate(() => aggregator.refresh()));
+
+
+  mainAppWindow.getTray()?.setAggregator(aggregator);
+  for (const [senderId, count] of preAggregatorBadgeCounts) {
+    aggregator.onBadgeCount({ sender: { id: senderId } }, count);
+  }
+  preAggregatorBadgeCounts.clear();
+  return aggregator;
 }
 
 function handleGlobalShortcutDisabled() {

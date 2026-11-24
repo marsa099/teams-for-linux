@@ -1,3 +1,5 @@
+"use strict";
+
 /**
  * MQTT Status Monitor
  *
@@ -22,9 +24,12 @@
  */
 
 class MQTTStatusMonitor {
+	// Private: anything on `this` is reachable from page script (GHSA-58j7-22f8-6xqp).
+	#ipcRenderer = null;
+
 	init(config, ipcRenderer) {
 		this.config = config;
-		this.ipcRenderer = ipcRenderer;
+		this.#ipcRenderer = ipcRenderer;
 		this.lastStatus = null;
 		this.observer = null;
 		this.pollInterval = null;
@@ -40,11 +45,13 @@ class MQTTStatusMonitor {
 			{ keywords: ['available', 'online', 'green', 'presence-available', 'status-available'], code: 1 }
 		];
 
-		// Only start monitoring if MQTT is enabled or the macOS dock-icon
-		// status overlay needs the local status events
-		const dockIconWantsStatus =
-			config.media?.showStatusOnDockIcon && process.platform === 'darwin';
-		if (!config.mqtt?.enabled && !dockIconWantsStatus) {
+		// D-Bus status observation is explicitly opt-in, independently of MQTT.
+		const dbusEnabled = process.platform === 'linux' && config.dbusControl?.enabled === true;
+		// media.showStatusOnDockIcon asks for the presence overlay: the Dock on
+		// macOS, the tray icon on the platforms that have no Dock. Either way
+		// the monitor has to run, so there is no platform test here.
+		const statusOverlayWanted = config.media?.showStatusOnDockIcon === true;
+		if (!config.mqtt?.enabled && !dbusEnabled && !statusOverlayWanted) {
 			console.debug('Status monitoring disabled');
 			return;
 		}
@@ -114,8 +121,8 @@ class MQTTStatusMonitor {
 				console.debug(`Teams status changed: ${this.lastStatus} -> ${status}`);
 				this.lastStatus = status;
 
-				if (this.config.mqtt?.enabled) {
-					this.ipcRenderer.invoke('user-status-changed', {
+				if (this.config.mqtt?.enabled || (process.platform === 'linux' && this.config.dbusControl?.enabled === true)) {
+					this.#ipcRenderer.invoke('user-status-changed', {
 						data: { status: status }
 					});
 				}

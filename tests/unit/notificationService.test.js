@@ -3,6 +3,8 @@
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert');
 const { EventEmitter } = require('node:events');
+const v8 = require('node:v8');
+const vm = require('node:vm');
 
 const electronPath = require.resolve('electron');
 const servicePath = require.resolve('../../app/notifications/service');
@@ -91,7 +93,12 @@ function responseWith(bytes, options = {}) {
 }
 
 function makeService(fetch, options = {}) {
-	const { config = {}, windowMissing = false, windowDestroyed = false } = options;
+	const {
+		config = {},
+		windowMissing = false,
+		windowDestroyed = false,
+		soundPlayer = null,
+	} = options;
 	const window = {
 		webContents: {
 			getURL: () => 'https://teams.microsoft.com/',
@@ -108,7 +115,7 @@ function makeService(fetch, options = {}) {
 	};
 	const NotificationService = require(servicePath);
 	const service = new NotificationService(
-		null,
+		soundPlayer,
 		{ appPath: '/app', defaultNotificationUrgency: 'normal', ...config },
 		mainWindow,
 		() => 1,
@@ -298,6 +305,38 @@ describe('NotificationService click and close relay', () => {
 		});
 	}
 
+	it("brings the creating renderer's profile forward before showing the window", async () => {
+		const service = makeService(async () => {});
+		const order = [];
+		const sender = makeSender();
+		service.setProfileActivator((target) => {
+			order.push(target === sender ? 'activate:creator' : 'activate:other');
+			windowActions.push('activate');
+		});
+
+		await show({ notificationId: 'notif-a' }, sender);
+		notifications[0].emit('click');
+
+		assert.deepStrictEqual(order, ['activate:creator']);
+		assert.deepStrictEqual(windowActions, ['activate', 'show']);
+		assert.deepStrictEqual(sends, [['notification-clicked', 'notif-a']]);
+	});
+
+	it('leaves the profile alone when clickAction is "none"', async () => {
+		const service = makeService(async () => {}, {
+			config: { notifications: { electron: { clickAction: 'none' } } },
+		});
+		let activated = false;
+		service.setProfileActivator(() => {
+			activated = true;
+		});
+
+		await show({ notificationId: 'notif-b' }, makeSender());
+		notifications[0].emit('click');
+
+		assert.strictEqual(activated, false);
+	});
+
 	it('does not throw or relay when the window is gone', async () => {
 		makeService(async () => {}, { windowMissing: true });
 
@@ -335,5 +374,119 @@ describe('NotificationService click and close relay', () => {
 		notifications[0].emit('close');
 
 		assert.deepStrictEqual(sends, [['notification-closed', 'notif-7']]);
+	});
+});
+
+// Electron's Notification is only weakly held by V8. Once the JS object is
+// collected the native notification loses its delegate, so a click from the
+// GNOME or KDE notification list, after the banner has gone, reaches no
+// handler (#3121). A forced full collection shows what the service still holds.
+v8.setFlagsFromString('--expose-gc');
+const gc = vm.runInNewContext('gc');
+
+async function collectGarbage() {
+	// WeakRef targets stay alive until the current job ends.
+	await new Promise((resolve) => setImmediate(resolve));
+	gc();
+}
+
+// Swap the mock's strong references for weak ones, so only the service can
+// keep a notification alive.
+function releaseMockReferences() {
+	const refs = notifications.map((notification) => new WeakRef(notification));
+	notifications.length = 0;
+	return refs;
+}
+
+describe('NotificationService keeps notifications alive', () => {
+	let originalConsoleDebug;
+	let originalConsoleWarn;
+
+	beforeEach(() => {
+		installElectronMock();
+		originalConsoleDebug = console.debug;
+		originalConsoleWarn = console.warn;
+		console.debug = () => {};
+		console.warn = () => {};
+	});
+
+	afterEach(() => {
+		console.debug = originalConsoleDebug;
+		console.warn = originalConsoleWarn;
+		cleanupElectronMock();
+	});
+
+	it('still relays a click that arrives after a garbage collection', async () => {
+		makeService(async () => {});
+
+		await show({ notificationId: 'live-1' }, makeSender());
+		const [ref] = releaseMockReferences();
+		await collectGarbage();
+
+		assert.ok(ref.deref(), 'notification was collected while still clickable');
+		ref.deref().emit('click');
+		assert.deepStrictEqual(sends, [['notification-clicked', 'live-1']]);
+	});
+
+	for (const event of ['click', 'close']) {
+		it(`lets go of the notification once it emits ${event}`, async () => {
+			makeService(async () => {});
+
+			await show({ notificationId: `live-${event}` }, makeSender());
+			const [ref] = releaseMockReferences();
+			await collectGarbage();
+			assert.ok(ref.deref(), 'notification was collected before it emitted');
+
+			ref.deref().emit(event);
+			await collectGarbage();
+			assert.strictEqual(ref.deref(), undefined);
+		});
+	}
+
+	it('lets go of the oldest notification once more than 50 are live', async () => {
+		makeService(async () => {});
+
+		// 50 is MAX_TRACKED_NOTIFICATIONS in app/notifications/service.js.
+		for (let i = 0; i <= 50; i++) {
+			await show({ notificationId: `live-${i}` }, makeSender());
+		}
+		const refs = releaseMockReferences();
+		await collectGarbage();
+
+		assert.strictEqual(refs[0].deref(), undefined);
+		assert.ok(refs.slice(1).every((ref) => ref.deref()), 'a newer notification was collected');
+	});
+});
+
+describe('NotificationService muted profiles (ADR-020 Phase 2)', () => {
+	let originalConsoleDebug;
+	let played;
+	const soundPlayer = { play: async (file) => played.push(file) };
+
+	beforeEach(() => {
+		installElectronMock();
+		played = [];
+		originalConsoleDebug = console.debug;
+		console.debug = () => {};
+	});
+
+	afterEach(() => {
+		console.debug = originalConsoleDebug;
+		cleanupElectronMock();
+	});
+
+	it('plays the sound and leaves the OS toast audible by default', async () => {
+		makeService(async () => {}, { soundPlayer });
+		await show({ type: 'new-message' }, makeSender());
+		assert.strictEqual(played.length, 1);
+		assert.strictEqual(notifications[0].options.silent, false);
+	});
+
+	it('a silent toast from a muted profile plays no sound and silences the OS toast', async () => {
+		makeService(async () => {}, { soundPlayer });
+		await show({ type: 'new-message', silent: true }, makeSender());
+		assert.deepStrictEqual(played, []);
+		assert.strictEqual(notifications[0].options.silent, true);
+		assert.strictEqual(notifications[0].shown, true);
 	});
 });

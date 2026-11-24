@@ -18,7 +18,6 @@ jobs:
       contents: read
 
     env:
-      SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_TOKEN }}
       SNAPCRAFT_BUILD_ENVIRONMENT: lxd
 
     steps:
@@ -26,7 +25,7 @@ jobs:
         uses: samuelmeuli/action-snapcraft@d33c176a9b784876d966f80fb1b461808edc0641 # v2.1.1
 
       - name: Install and initialize LXD
-        uses: canonical/setup-lxd@e3ef25fc529b40aa403b264cdf44e7882b361164 # main
+        uses: canonical/setup-lxd@e38f436c468900dfe2b6ca98fb8eb352bbbb917a # main
 
       - name: Check out Git repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -34,7 +33,7 @@ jobs:
           ref: ${{ github.event.release.tag_name }}
 
       - name: Install Node.js and NPM
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -50,46 +49,11 @@ jobs:
         run: npm run dist:linux:snap -- --publish never
 
       - name: Publish to candidate channel
-        run: |
-          SNAP_FILE=$(ls dist/*.snap)
-          echo "Uploading ${SNAP_FILE} to candidate channel"
-          snapcraft upload "${SNAP_FILE}" --release=candidate
-
-  snap-candidate-armv7l:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    env:
-      SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_TOKEN }}
-      # Note: No LXD - electron-builder handles armv7l cross-compilation directly
-
-    steps:
-      - name: Install Snapcraft
-        uses: samuelmeuli/action-snapcraft@d33c176a9b784876d966f80fb1b461808edc0641 # v2.1.1
-
-      - name: Check out Git repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.release.tag_name }}
-
-      - name: Install Node.js and NPM
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-
-      - name: Install dependencies
-        # --ignore-scripts blocks arbitrary dependency lifecycle scripts; the
-        # explicit postinstall keeps electron-builder install-app-deps (native
-        # dep rebuild) that packaging needs.
-        run: |
-          npm ci --ignore-scripts
-          npm run postinstall
-
-      - name: Build snap
-        run: npm run dist:linux:snap:armv7l -- --publish never
-
-      - name: Publish to candidate channel
+        # The store credential is set on this step only, the one that
+        # uploads, so the setup actions, the dependency install and the build
+        # never see it. Keep in step with snap.yml.
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_TOKEN }}
         run: |
           SNAP_FILE=$(ls dist/*.snap)
           echo "Uploading ${SNAP_FILE} to candidate channel"
@@ -101,7 +65,6 @@ jobs:
       contents: read
 
     env:
-      SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_TOKEN }}
       SNAPCRAFT_BUILD_ENVIRONMENT: lxd
 
     steps:
@@ -110,8 +73,8 @@ jobs:
         # electron-builder's deprecated core22 `snap` target invokes
         # (`snapcraft snap --output`), so the native-arm64 build fails. Pin
         # below 9.0.0 until the snap build migrates to the core24 `snapcraft`
-        # target, which uses `snapcraft pack` (#2590, #2592). The amd64 and
-        # armv7l jobs pack via app-builder directly and are unaffected. A
+        # target, which uses `snapcraft pack` (#2590, #2592). The amd64 job
+        # packs via app-builder directly and is unaffected. A
         # first core24 migration (#2758) shipped snaps that core-dump on
         # launch and was reverted (#2905), restoring this pin.
         uses: samuelmeuli/action-snapcraft@d33c176a9b784876d966f80fb1b461808edc0641 # v2.1.1
@@ -119,7 +82,7 @@ jobs:
           channel: 8.x/stable
 
       - name: Install and initialize LXD
-        uses: canonical/setup-lxd@e3ef25fc529b40aa403b264cdf44e7882b361164 # main
+        uses: canonical/setup-lxd@e38f436c468900dfe2b6ca98fb8eb352bbbb917a # main
 
       - name: Check out Git repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -127,7 +90,7 @@ jobs:
           ref: ${{ github.event.release.tag_name }}
 
       - name: Install Node.js and NPM
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
 
@@ -143,6 +106,9 @@ jobs:
         run: npm run dist:linux:snap:arm64 -- --publish never
 
       - name: Publish to candidate channel
+        # Store credential on the uploading step only; see the snap-candidate job.
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_TOKEN }}
         run: |
           SNAP_FILE=$(ls dist/*.snap)
           echo "Uploading ${SNAP_FILE} to candidate channel"

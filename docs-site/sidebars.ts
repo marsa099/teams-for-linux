@@ -53,6 +53,7 @@ const sidebars: SidebarsConfig = {
           label: 'Development Guides',
           items: [
             'development/ipc-api',
+            'development/dbus-control',
             'development/log-config',
             'development/release-info',
           ],
@@ -101,13 +102,11 @@ const sidebars: SidebarsConfig = {
             'development/adr/029-config-schema-single-source-of-truth',
             'development/adr/030-graph-api-teams-session-token',
             'development/adr/031-ozone-platform-x11-default',
-          ],
-        },
-        {
-          type: 'category',
-          label: 'Research & Analysis',
-          items: [
-            'development/research/README',
+            'development/adr/032-secondary-window-for-calls',
+            'development/adr/033-dbus-control-api',
+            'development/adr/034-native-wayland-default',
+            'development/adr/035-renderer-trust-boundary',
+            'development/adr/036-agents-md-adoption',
           ],
         },
       ],
